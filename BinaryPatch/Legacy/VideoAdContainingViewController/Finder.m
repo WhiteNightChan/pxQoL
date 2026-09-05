@@ -136,6 +136,20 @@ BOOL pxQoLFindVideoAdContainingViewControllerMatch(
             continue;
         }
 
+        /*
+         * The target wrapper-generation function uses:
+         *
+         *   x20 = generated VideoAdContainingViewController
+         *
+         * for the containedViewController ivar access.
+         *
+         * Reject unrelated xN-based ivar accesses even if
+         * they happen to reference a global ivar offset of 0x28.
+         */
+        if (objectReg != 20) {
+            continue;
+        }
+
         uint32_t storedReg = 0;
         uint32_t strObjectReg = 0;
         uint32_t strIndexReg = 0;
