@@ -114,6 +114,83 @@ BOOL pxQoLFindVideoAdContainingViewControllerMatch(
 
 
         /*
+         * DEBUG:
+         *
+         * Show the raw instructions immediately after
+         * the global ivar access.
+         *
+         * Known target:
+         *
+         *   LDR x9,  [x20, x8]
+         *   STR x19, [x20, x8]
+         */
+        pxQoLLog(
+            @"[VideoAdContainingVC] ivar offset match at index=%lu",
+            (unsigned long)i
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   ADRP       = 0x%08x",
+            insns[i]
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   LDR global = 0x%08x",
+            insns[i + 1]
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   LDR reg    = 0x%08x",
+            insns[i + 2]
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   STR reg    = 0x%08x",
+            insns[i + 3]
+        );
+
+        uint32_t debugLoadedReg = 0;
+        uint32_t debugObjectReg = 0;
+        uint32_t debugIndexReg = 0;
+
+        BOOL debugLDR =
+            pxQoLIsLDR64Register(
+                insns[i + 2],
+                &debugLoadedReg,
+                &debugObjectReg,
+                &debugIndexReg
+            );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   LDR decoder = %@ loaded=X%u object=X%u index=X%u",
+            debugLDR ? @"YES" : @"NO",
+            debugLoadedReg,
+            debugObjectReg,
+            debugIndexReg
+        );
+
+        uint32_t debugStoredReg = 0;
+        uint32_t debugSTRObjectReg = 0;
+        uint32_t debugSTRIndexReg = 0;
+
+        BOOL debugSTR =
+            pxQoLIsSTR64Register(
+                insns[i + 3],
+                &debugStoredReg,
+                &debugSTRObjectReg,
+                &debugSTRIndexReg
+            );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   STR decoder = %@ stored=X%u object=X%u index=X%u",
+            debugSTR ? @"YES" : @"NO",
+            debugStoredReg,
+            debugSTRObjectReg,
+            debugSTRIndexReg
+        );
+
+
+        /*
          * containedViewController access:
          *
          *   LDR xLoaded, [xObject, xIndex]
@@ -123,14 +200,13 @@ BOOL pxQoLFindVideoAdContainingViewControllerMatch(
         uint32_t objectReg = 0;
         uint32_t indexReg = 0;
 
-        if (!pxQoLIsLDR64Register(
-                insns[i + 2],
-                &loadedReg,
-                &objectReg,
-                &indexReg)) {
-
+        if (!debugLDR) {
             continue;
         }
+
+        loadedReg = debugLoadedReg;
+        objectReg = debugObjectReg;
+        indexReg = debugIndexReg;
 
         if (indexReg != globalLdrRt) {
             continue;
