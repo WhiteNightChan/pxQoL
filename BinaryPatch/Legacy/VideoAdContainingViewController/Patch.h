@@ -1,0 +1,8 @@
+#ifndef PXQOL_LEGACY_VIDEOADCONTAININGVIEWCONTROLLER_PATCH_H
+#define PXQOL_LEGACY_VIDEOADCONTAININGVIEWCONTROLLER_PATCH_H
+
+#import <Foundation/Foundation.h>
+
+BOOL pxQoLPatchVideoAdContainingViewController(void);
+
+#endif

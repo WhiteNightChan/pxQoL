@@ -1,0 +1,446 @@
+#import "Finder.h"
+
+#import "../../Core/pxQoLARM64.h"
+
+#import "../../../LogHelper.h"
+
+#include <string.h>
+
+#define pxQoLLog(fmt, ...) \
+    [LogHelper appendLine:[NSString stringWithFormat:(fmt), ##__VA_ARGS__]]
+
+BOOL pxQoLFindVideoAdContainingViewControllerMatch(
+    uint8_t *text,
+    unsigned long textSize,
+    uint64_t targetIvarOffset,
+    pxQoLVideoAdContainingViewControllerMatch *result
+)
+{
+    if (!text ||
+        textSize == 0 ||
+        !result) {
+
+        return NO;
+    }
+
+    memset(
+        result,
+        0,
+        sizeof(pxQoLVideoAdContainingViewControllerMatch)
+    );
+
+    uint32_t *insns =
+        (uint32_t *)text;
+
+    const size_t instructionCount =
+        textSize / sizeof(uint32_t);
+
+    NSUInteger matchCount = 0;
+
+    uint8_t *matchPatch1 = NULL;
+    uint8_t *matchPatch2 = NULL;
+
+    uintptr_t matchBranchTarget = 0;
+    uintptr_t matchGlobalAddress = 0;
+    uint64_t matchGlobalValue = 0;
+
+    uint32_t matchObjectReg = 0;
+    uint32_t matchIndexReg = 0;
+    uint32_t matchLoadedReg = 0;
+    uint32_t matchStoredReg = 0;
+
+
+    for (size_t i = 0;
+         i + 9 < instructionCount;
+         i++) {
+
+        /*
+         * Global ivar offset:
+         *
+         *   ADRP xN, ...
+         *   LDR  xN, [xN, #imm]
+         */
+        uintptr_t adrpAddress =
+            (uintptr_t)text +
+            i * sizeof(uint32_t);
+
+        uint32_t adrpReg = 0;
+        uintptr_t globalPage = 0;
+
+        if (!pxQoLDecodeADRP(
+                insns[i],
+                adrpAddress,
+                &adrpReg,
+                &globalPage)) {
+
+            continue;
+        }
+
+        uint32_t globalLdrRt = 0;
+        uint32_t globalLdrRn = 0;
+        uint32_t globalLdrImm12 = 0;
+
+        if (!pxQoLIsLDR64UnsignedImm(
+                insns[i + 1],
+                &globalLdrRt,
+                &globalLdrRn,
+                &globalLdrImm12)) {
+
+            continue;
+        }
+
+        if (globalLdrRn != adrpReg ||
+            globalLdrRt != adrpReg) {
+
+            continue;
+        }
+
+        uintptr_t globalAddress =
+            globalPage +
+            ((uintptr_t)globalLdrImm12 * 8);
+
+        uint64_t globalValue = 0;
+
+        if (!pxQoLReadU64(
+                globalAddress,
+                &globalValue)) {
+
+            continue;
+        }
+
+        if (globalValue != targetIvarOffset) {
+            continue;
+        }
+
+
+        /*
+         * containedViewController access:
+         *
+         *   LDR xLoaded, [xObject, xIndex]
+         *   STR x19,     [xObject, xIndex]
+         */
+        uint32_t loadedReg = 0;
+        uint32_t objectReg = 0;
+        uint32_t indexReg = 0;
+
+        if (!pxQoLIsLDR64Register(
+                insns[i + 2],
+                &loadedReg,
+                &objectReg,
+                &indexReg)) {
+
+            continue;
+        }
+
+        if (indexReg != globalLdrRt) {
+            continue;
+        }
+
+        uint32_t storedReg = 0;
+        uint32_t strObjectReg = 0;
+        uint32_t strIndexReg = 0;
+
+        if (!pxQoLIsSTR64Register(
+                insns[i + 3],
+                &storedReg,
+                &strObjectReg,
+                &strIndexReg)) {
+
+            continue;
+        }
+
+        if (strObjectReg != objectReg ||
+            strIndexReg != indexReg ||
+            storedReg != 19) {
+
+            continue;
+        }
+
+
+        /*
+         *   BL objc_release
+         *   BL objc_retain
+         */
+        if (!pxQoLIsBL(insns[i + 4]) ||
+            !pxQoLIsBL(insns[i + 5])) {
+
+            continue;
+        }
+
+
+        /*
+         * The wrapper-generation function keeps:
+         *
+         *   x19 = original view controller
+         *   x20 = generated VideoAdContainingViewController
+         *
+         * and returns x20 normally:
+         *
+         *   MOV x0, x20
+         */
+        if (!pxQoLIsMovReg(
+                insns[i + 6],
+                0,
+                20)) {
+
+            continue;
+        }
+
+
+        /*
+         * The target patch is two instructions before
+         * the containedViewController sequence:
+         *
+         *   ADRP x8, ...
+         *   ADD  x8, x8, #...
+         *
+         * and the branch skips directly to
+         *
+         *   MOV x0, x20
+         *
+         * We therefore expect:
+         *
+         *   i-12: ADRP
+         *   i-11: ADD
+         *
+         * with the ADRP destination matching the ADD source.
+         */
+        if (i < 12) {
+            continue;
+        }
+
+        size_t patch1Index = i - 12;
+        size_t patch2Index = i + 6;
+
+        uint32_t patchAdrpReg = 0;
+        uintptr_t patchAdrpTarget = 0;
+
+        if (!pxQoLDecodeADRP(
+                insns[patch1Index],
+                (uintptr_t)text +
+                    patch1Index * sizeof(uint32_t),
+                &patchAdrpReg,
+                &patchAdrpTarget)) {
+
+            continue;
+        }
+
+        /*
+         * ADD Xd, Xn, #imm
+         *
+         * We only need to validate that this is an ADD
+         * using the ADRP destination as both source/destination.
+         *
+         * ADD (immediate):
+         *   100xxxxx
+         */
+        uint32_t addInsn =
+            insns[patch1Index + 1];
+
+        uint32_t addRd =
+            addInsn & 0x1Fu;
+
+        uint32_t addRn =
+            (addInsn >> 5) & 0x1Fu;
+
+        if ((addInsn & 0xFF000000u) != 0x91000000u ||
+            addRd != patchAdrpReg ||
+            addRn != patchAdrpReg) {
+
+            continue;
+        }
+
+
+        /*
+         * The branch source is the ADD slot.
+         *
+         *   patch1:
+         *       MOV x0, x19
+         *
+         *   patch1 + 4:
+         *       B patch2
+         *
+         *   patch2:
+         *       MOV x0, x19
+         *
+         * patch2 + 4 must be the existing function epilogue.
+         */
+
+        uintptr_t patch2Address =
+            (uintptr_t)text +
+            patch2Index * sizeof(uint32_t);
+
+        /*
+         * The original instruction at patch2 is
+         * MOV x0, x20, so patch2 itself is the branch target.
+         */
+        uintptr_t branchTarget =
+            patch2Address;
+
+        /*
+         * Existing epilogue:
+         *
+         *   LDP x29, x30, [sp, #...]
+         *
+         * Detect the exact pair used by the target.
+         */
+        uint32_t epilogue =
+            insns[patch2Index + 1];
+
+        if ((epilogue & 0xFFC003FFu) != 0xA94003FDu) {
+
+            continue;
+        }
+
+
+        matchCount++;
+
+        matchPatch1 =
+            (uint8_t *)text +
+            patch1Index * sizeof(uint32_t);
+
+        matchPatch2 =
+            (uint8_t *)text +
+            patch2Index * sizeof(uint32_t);
+
+        matchBranchTarget =
+            branchTarget;
+
+        matchGlobalAddress =
+            globalAddress;
+
+        matchGlobalValue =
+            globalValue;
+
+        matchObjectReg =
+            objectReg;
+
+        matchIndexReg =
+            indexReg;
+
+        matchLoadedReg =
+            loadedReg;
+
+        matchStoredReg =
+            storedReg;
+
+
+        pxQoLLog(
+            @"[VideoAdContainingVC] candidate #%lu",
+            (unsigned long)matchCount
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   patch1=%p",
+            matchPatch1
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   patch2=%p",
+            matchPatch2
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   branchTarget=%p",
+            (void *)matchBranchTarget
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   globalAddress=%p",
+            (void *)matchGlobalAddress
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   globalValue=0x%llx",
+            matchGlobalValue
+        );
+
+        pxQoLLog(
+            @"[VideoAdContainingVC]   object=X%u index=X%u loaded=X%u stored=X%u",
+            matchObjectReg,
+            matchIndexReg,
+            matchLoadedReg,
+            matchStoredReg
+        );
+    }
+
+
+    pxQoLLog(
+        @"[VideoAdContainingVC] semantic candidate count = %lu",
+        (unsigned long)matchCount
+    );
+
+
+    if (matchCount != 1 ||
+        !matchPatch1 ||
+        !matchPatch2) {
+
+        if (matchCount == 0) {
+
+            pxQoLLog(
+                @"[VideoAdContainingVC] FAIL [3] no candidate with ivar offset 0x%llx",
+                targetIvarOffset
+            );
+
+        } else {
+
+            pxQoLLog(
+                @"[VideoAdContainingVC] FAIL [3] ambiguous candidate count"
+            );
+        }
+
+        return NO;
+    }
+
+
+    result->patch1 =
+        matchPatch1;
+
+    result->patch2 =
+        matchPatch2;
+
+    result->branchTarget =
+        matchBranchTarget;
+
+    result->globalAddress =
+        matchGlobalAddress;
+
+    result->globalValue =
+        matchGlobalValue;
+
+    result->objectReg =
+        matchObjectReg;
+
+    result->indexReg =
+        matchIndexReg;
+
+    result->loadedReg =
+        matchLoadedReg;
+
+    result->storedReg =
+        matchStoredReg;
+
+
+    pxQoLLog(
+        @"[VideoAdContainingVC] target match = %p",
+        matchPatch1
+    );
+
+    pxQoLLog(
+        @"[VideoAdContainingVC] patch2 = %p",
+        matchPatch2
+    );
+
+    pxQoLLog(
+        @"[VideoAdContainingVC] global ivar address = %p",
+        (void *)matchGlobalAddress
+    );
+
+    pxQoLLog(
+        @"[VideoAdContainingVC] global ivar value = 0x%llx",
+        matchGlobalValue
+    );
+
+
+    return YES;
+}

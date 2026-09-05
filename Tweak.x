@@ -1,5 +1,7 @@
 #import <UIKit/UIKit.h>
+
 #import "BinaryPatch/Legacy/AdContainingViewController/Patch.h"
+#import "BinaryPatch/Legacy/VideoAdContainingViewController/Patch.h"
 
 #import "LogHelper.h"
 
@@ -27,9 +29,17 @@
         ]
     }];
 
-    BOOL result = pxQoLPatchAdContainingViewController();
+    BOOL adPatchResult =
+        pxQoLPatchAdContainingViewController();
 
-    NSLog(@"[pxQoL] ad patch result = %@", result ? @"YES" : @"NO");
+    BOOL videoAdPatchResult =
+        pxQoLPatchVideoAdContainingViewController();
+
+    [LogHelper appendLine:[NSString stringWithFormat:
+        @"[pxQoL] ad patch result = %@, video ad patch result = %@",
+        adPatchResult ? @"YES" : @"NO",
+        videoAdPatchResult ? @"YES" : @"NO"
+    ]];
 }
 
 %hook _TtC6Legacy20RootTabBarController
