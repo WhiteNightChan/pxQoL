@@ -188,65 +188,109 @@ BOOL pxQoLFindVideoAdContainingViewControllerMatch(
 
 
         /*
-         * The target patch is two instructions before
-         * the containedViewController sequence:
+         * Locate patch1 from the function-local prologue pattern:
          *
-         *   ADRP x8, ...
-         *   ADD  x8, x8, #...
+         *   MOV  x19, x0
+         *   ADRP xN, ...
+         *   ADD  xN, xN, #...
          *
-         * and the branch skips directly to
+         * The MOV establishes x19 as the original view controller.
+         * The following ADRP/ADD pair is the code that will be
+         * replaced by:
          *
-         *   MOV x0, x20
+         *   MOV x0, x19
+         *   B   patch2
          *
-         * We therefore expect:
-         *
-         *   i-12: ADRP
-         *   i-11: ADD
-         *
-         * with the ADRP destination matching the ADD source.
+         * Do not assume a fixed instruction distance from the
+         * containedViewController access.
          */
-        if (i < 12) {
-            continue;
-        }
+        size_t patch2Index =
+            i + 6;
 
-        size_t patch1Index = i - 12;
-        size_t patch2Index = i + 6;
+        size_t patch1Index = 0;
 
-        uint32_t patchAdrpReg = 0;
-        uintptr_t patchAdrpTarget = 0;
-
-        if (!pxQoLDecodeADRP(
-                insns[patch1Index],
-                (uintptr_t)text +
-                    patch1Index * sizeof(uint32_t),
-                &patchAdrpReg,
-                &patchAdrpTarget)) {
-
-            continue;
-        }
+        BOOL foundPatch1 = NO;
 
         /*
-         * ADD Xd, Xn, #imm
+         * Search backward within the same local function region.
          *
-         * We only need to validate that this is an ADD
-         * using the ADRP destination as both source/destination.
+         * We only need to find:
          *
-         * ADD (immediate):
-         *   100xxxxx
+         *   MOV x19, x0
+         *   ADRP xN, ...
+         *   ADD  xN, xN, #...
+         *
+         * immediately followed by the ADRP.
          */
-        uint32_t addInsn =
-            insns[patch1Index + 1];
+        size_t searchStart =
+            (i > 128) ? (i - 128) : 0;
 
-        uint32_t addRd =
-            addInsn & 0x1Fu;
+        for (size_t j = i;
+             j > searchStart;
+             j--) {
 
-        uint32_t addRn =
-            (addInsn >> 5) & 0x1Fu;
+            size_t movIndex =
+                j - 1;
 
-        if ((addInsn & 0xFF000000u) != 0x91000000u ||
-            addRd != patchAdrpReg ||
-            addRn != patchAdrpReg) {
+            if (!pxQoLIsMovReg(
+                    insns[movIndex],
+                    19,
+                    0)) {
 
+                continue;
+            }
+
+            size_t candidatePatch1 =
+                j;
+
+            if (candidatePatch1 + 1 >= instructionCount) {
+                continue;
+            }
+
+            uint32_t patchAdrpReg = 0;
+            uintptr_t patchAdrpTarget = 0;
+
+            if (!pxQoLDecodeADRP(
+                    insns[candidatePatch1],
+                    (uintptr_t)text +
+                        candidatePatch1 * sizeof(uint32_t),
+                    &patchAdrpReg,
+                    &patchAdrpTarget)) {
+
+                continue;
+            }
+
+            /*
+             * ADD Xd, Xn, #imm
+             *
+             * Require the ADD to use the ADRP destination
+             * as both destination and source.
+             */
+            uint32_t addInsn =
+                insns[candidatePatch1 + 1];
+
+            uint32_t addRd =
+                addInsn & 0x1Fu;
+
+            uint32_t addRn =
+                (addInsn >> 5) & 0x1Fu;
+
+            if ((addInsn & 0xFF000000u) != 0x91000000u ||
+                addRd != patchAdrpReg ||
+                addRn != patchAdrpReg) {
+
+                continue;
+            }
+
+            patch1Index =
+                candidatePatch1;
+
+            foundPatch1 = YES;
+
+            break;
+        }
+
+        if (!foundPatch1) {
             continue;
         }
 
