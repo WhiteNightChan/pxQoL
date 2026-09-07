@@ -76,9 +76,11 @@
 
     /*
      * その他
-     *
-     * 今後ここに設定項目を追加する。
      */
+    if (section == 1) {
+        return 2;
+    }
+
     return 0;
 }
 
@@ -91,6 +93,16 @@ titleForHeaderInSection:(NSInteger)section {
 
     if (section == 1) {
         return @"その他";
+    }
+
+    return nil;
+}
+
+- (NSString *)tableView:(UITableView *)tableView
+titleForFooterInSection:(NSInteger)section
+{
+    if (section == 1) {
+        return @"変更はpixivの再起動後に反映されます。";
     }
 
     return nil;
@@ -229,13 +241,62 @@ willDisplayHeaderView:(UIView *)view
             cell.accessoryView = toggle;
         }
 
-    } else {
+    } else if (indexPath.section == 1) {
 
         /*
          * section 1 = その他
          *
-         * 現在は行なし。
+         * row 0 = 広告ブロック
+         * row 1 = Fallback広告ブロック
          */
+
+        if (indexPath.row == 0) {
+
+            cell.textLabel.text = @"広告ブロック";
+            cell.textLabel.numberOfLines = 0;
+
+            UISwitch *toggle =
+                [[UISwitch alloc] init];
+
+            toggle.on =
+                [[NSUserDefaults standardUserDefaults]
+                    boolForKey:@"pxQoL_BlockAds"];
+
+            [toggle addTarget:self
+                       action:@selector(pxQoL_adBlockToggleChanged:)
+             forControlEvents:UIControlEventValueChanged];
+
+            cell.accessoryView = toggle;
+
+        } else if (indexPath.row == 1) {
+
+            cell.textLabel.text = @"広告ブロック(Fallback)";
+            cell.textLabel.numberOfLines = 0;
+
+            UISwitch *toggle =
+                [[UISwitch alloc] init];
+
+            toggle.on =
+                [[NSUserDefaults standardUserDefaults]
+                    boolForKey:@"pxQoL_AdBlockFallback"];
+
+            /*
+             * 主広告ブロックがOFFならFallbackも実行されないため、
+             * UI上も操作不可にする。
+             */
+            toggle.enabled =
+                [[NSUserDefaults standardUserDefaults]
+                    boolForKey:@"pxQoL_BlockAds"];
+
+            [toggle addTarget:self
+                       action:@selector(pxQoL_adBlockFallbackToggleChanged:)
+             forControlEvents:UIControlEventValueChanged];
+
+            cell.accessoryView = toggle;
+        }
+
+    } else {
+
         cell.textLabel.text = nil;
         cell.accessoryView = nil;
     }
@@ -299,6 +360,38 @@ willDisplayHeaderView:(UIView *)view
     NSLog(@"[pxQoL] %@ = %@",
           key,
           sender.isOn ? @"YES" : @"NO");
+}
+
+
+- (void)pxQoL_adBlockToggleChanged:(UISwitch *)sender
+{
+    [[NSUserDefaults standardUserDefaults]
+        setBool:sender.isOn
+         forKey:@"pxQoL_BlockAds"];
+
+    NSLog(
+        @"[pxQoL] pxQoL_BlockAds = %@",
+        sender.isOn ? @"YES" : @"NO"
+    );
+
+    /*
+     * Fallbackセルのenabled状態を更新。
+     */
+    [self.tableView reloadSections:
+        [NSIndexSet indexSetWithIndex:1]
+              withRowAnimation:UITableViewRowAnimationNone];
+}
+
+- (void)pxQoL_adBlockFallbackToggleChanged:(UISwitch *)sender
+{
+    [[NSUserDefaults standardUserDefaults]
+        setBool:sender.isOn
+         forKey:@"pxQoL_AdBlockFallback"];
+
+    NSLog(
+        @"[pxQoL] pxQoL_AdBlockFallback = %@",
+        sender.isOn ? @"YES" : @"NO"
+    );
 }
 
 #pragma mark - Drag

@@ -1,10 +1,9 @@
 #import <UIKit/UIKit.h>
-#import <math.h>
-#import "LogHelper.h"
 
-@interface MANativeAdLoader : NSObject
-- (void)loadAdIntoAdView:(id)view;
-@end
+#import "BinaryPatch/PixivOAuthUser/Patch.h"
+#import "AdBlockFallback.h"
+#import "SearchPopularPreviewRewrite.h"
+
 
 @interface UIImageAsset (pxQoL)
 - (NSString *)assetName;
@@ -13,27 +12,28 @@
 @interface _TtC6Legacy20RootTabBarController : UITabBarController
 @end
 
-@interface _TtC6Legacy26AdContainingViewController : UIViewController
-- (UIView *)adContainerView;
-- (UIView *)adBackgroundView;
-- (NSLayoutConstraint *)adContainerViewHeightConstraint;
-- (NSLayoutConstraint *)adBackgroundViewHeightConstraint;
-- (void)updateAdVisibility;
-@end
 
-@class _TtC6Legacy33TableViewModelTableViewController;
+#pragma mark - Settings
 
-@interface _TtC3Ads24RectangleAdTableViewCell : UITableViewCell
-@end
+static BOOL gPxQoLBlockAdsEnabled = YES;
 
-%hook MANativeAdLoader
-
-- (void)loadAdIntoAdView:(id)view
+static BOOL pxQoLReadBlockAdsEnabled(void)
 {
-    pxQoLLog(@"[AppLovinNativeAd] blocked loadAdIntoAdView: %@", view);
-}
+    NSUserDefaults *defaults =
+        [NSUserDefaults standardUserDefaults];
 
-%end
+    id storedValue =
+        [defaults objectForKey:@"pxQoL_BlockAds"];
+
+    /*
+     * 未設定時は従来どおり広告ブロックON。
+     */
+    if (storedValue == nil) {
+        return YES;
+    }
+
+    return [storedValue boolValue];
+}
 
 %hook _TtC6Legacy20RootTabBarController
 
@@ -198,158 +198,36 @@
 
 %end
 
+%ctor {
+    /*
+     * 広告ブロック設定は起動時に確定させる。
+     *
+     * PixivOAuthUser patchは実行後に安全に解除できないため、
+     * 設定変更は次回起動から反映する。
+     */
+    gPxQoLBlockAdsEnabled =
+        pxQoLReadBlockAdsEnabled();
 
-
-#pragma mark - AdContainingViewController
-
-static void pxQoLNeutralizeAdContainingViewController(
-    _TtC6Legacy26AdContainingViewController *viewController)
-{
-    UIView *adContainerView =
-        [viewController adContainerView];
-
-    UIView *adBackgroundView =
-        [viewController adBackgroundView];
-
-    NSLayoutConstraint *adContainerViewHeightConstraint =
-        [viewController adContainerViewHeightConstraint];
-
-    NSLayoutConstraint *adBackgroundViewHeightConstraint =
-        [viewController adBackgroundViewHeightConstraint];
-
-    if (adContainerView) {
-        adContainerView.hidden = YES;
-        adContainerView.clipsToBounds = YES;
-        adContainerView.userInteractionEnabled = NO;
+    if (gPxQoLBlockAdsEnabled) {
+        pxQoLPatchPixivOAuthUserPremium();
+        pxQoLInitSearchPopularPreviewRewrite();
     }
-
-    if (adBackgroundView) {
-        adBackgroundView.hidden = YES;
-        adBackgroundView.clipsToBounds = YES;
-        adBackgroundView.userInteractionEnabled = NO;
-    }
-
-    if (adContainerViewHeightConstraint) {
-        adContainerViewHeightConstraint.constant = 0.0;
-    }
-
-    if (adBackgroundViewHeightConstraint) {
-        adBackgroundViewHeightConstraint.constant = 0.0;
-    }
-
-    UIEdgeInsets additionalSafeAreaInsets =
-        viewController.additionalSafeAreaInsets;
-
-    if (additionalSafeAreaInsets.bottom != 0.0) {
-        additionalSafeAreaInsets.bottom = 0.0;
-        viewController.additionalSafeAreaInsets = additionalSafeAreaInsets;
-    }
-}
-
-%hook _TtC6Legacy26AdContainingViewController
-
-- (void)viewDidLoad
-{
-    %orig;
-    pxQoLNeutralizeAdContainingViewController(self);
-}
-
-- (void)viewWillAppear:(BOOL)animated
-{
-    %orig(animated);
-    pxQoLNeutralizeAdContainingViewController(self);
-}
-
-- (void)updateAdVisibility
-{
-    %orig;
-    pxQoLNeutralizeAdContainingViewController(self);
-}
-
-- (void)viewWillLayoutSubviews
-{
-    %orig;
-    pxQoLNeutralizeAdContainingViewController(self);
-}
-
-%end
-
-#pragma mark - RectangleAdTableViewCell
-
-%hook _TtC6Legacy33TableViewModelTableViewController
-
-- (CGFloat)tableView:(UITableView *)tableView
-heightForRowAtIndexPath:(NSIndexPath *)indexPath
-{
-    CGFloat originalHeight = %orig;
 
     /*
-     * Rectangle広告rowの純正height:
+     * 旧広告ブロック実装。
      *
-     *   width * 5/6 + 38
+     * pxQoL_BlockAds == YES
+     * かつ
+     * pxQoL_AdBlockFallback == YES
      *
-     * 実機観測:
-     *   width 414 -> 383
-     *   width   0 -> 38
-     *
-     * indexPathの位置には依存しない。
+     * の場合だけAdBlockFallback.x側でhookを初期化する。
      */
-    CGFloat rectangleHeight =
-        CGRectGetWidth(tableView.bounds) * (5.0 / 6.0) + 38.0;
+    pxQoLInitAdBlockFallback();
 
-    if (fabs(originalHeight - rectangleHeight) < 0.001) {
-        return 0.0;
-    }
-
-    return originalHeight;
-}
-
-%end
-
-%hook _TtC3Ads24RectangleAdTableViewCell
-
-- (instancetype)initWithStyle:(UITableViewCellStyle)style
-              reuseIdentifier:(NSString *)reuseIdentifier
-{
-    id cell =
-        %orig(style, reuseIdentifier);
-
-    if (cell) {
-        [cell setHidden:YES];
-        [cell setClipsToBounds:YES];
-        [cell setUserInteractionEnabled:NO];
-    }
-
-    return cell;
-}
-
-- (instancetype)initWithCoder:(NSCoder *)coder
-{
-    id cell =
-        %orig(coder);
-
-    if (cell) {
-        [cell setHidden:YES];
-        [cell setClipsToBounds:YES];
-        [cell setUserInteractionEnabled:NO];
-    }
-
-    return cell;
-}
-
-- (void)prepareForReuse
-{
-    %orig;
-
-    [self setHidden:YES];
-    [self setClipsToBounds:YES];
-    [self setUserInteractionEnabled:NO];
-}
-
-%end
-
-%ctor {
     [[NSUserDefaults standardUserDefaults] registerDefaults:@{
+        @"pxQoL_BlockAds": @YES,
+        @"pxQoL_AdBlockFallback": @NO,
+
         @"pxQoL_ShowHome": @YES,
         @"pxQoL_ShowSearch": @YES,
         @"pxQoL_ShowNew": @YES,
@@ -364,5 +242,4 @@ heightForRowAtIndexPath:(NSIndexPath *)indexPath
             @"icon-tabbar-notifications"
         ]
     }];
-
 }
