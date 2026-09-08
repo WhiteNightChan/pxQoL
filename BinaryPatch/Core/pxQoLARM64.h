@@ -45,6 +45,38 @@ bool pxQoLIsMovReg(
     uint32_t srcReg
 );
 
+bool pxQoLDecodeADD64RegisterNoShift(
+    uint32_t insn,
+    uint32_t *rd,
+    uint32_t *rn,
+    uint32_t *rm
+);
+
+bool pxQoLDecodeADD64ImmediateNoShift(
+    uint32_t insn,
+    uint32_t *rd,
+    uint32_t *rn,
+    uint32_t *imm12
+);
+
+bool pxQoLDecodeMovReg(
+    uint32_t insn,
+    uint32_t *dstReg,
+    uint32_t *srcReg
+);
+
+bool pxQoLDecodeLDUR64(
+    uint32_t insn,
+    uint32_t *rt,
+    uint32_t *rn,
+    int32_t *imm9
+);
+
+bool pxQoLDecodeBLR(
+    uint32_t insn,
+    uint32_t *rn
+);
+
 bool pxQoLDecodeADRP(
     uint32_t insn,
     uintptr_t pc,

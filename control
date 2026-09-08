@@ -1,7 +1,7 @@
 Package: com.whitenightchan.pxqol
 Name: pxQoL
 Description: Improve your pixiv experience.
-Version: 0.0.2
+Version: 0.0.3
 Architecture: iphoneos-arm
 Maintainer: WhiteNightChan
 Author: WhiteNightChan

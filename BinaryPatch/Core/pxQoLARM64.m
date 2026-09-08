@@ -102,9 +102,61 @@ bool pxQoLIsB(uint32_t insn)
 }
 
 
-bool pxQoLIsMovReg(uint32_t insn,
-                        uint32_t dstReg,
-                        uint32_t srcReg)
+bool pxQoLDecodeADD64RegisterNoShift(uint32_t insn,
+                                          uint32_t *rd,
+                                          uint32_t *rn,
+                                          uint32_t *rm)
+{
+    /*
+     * ADD Xd, Xn, Xm
+     *
+     * 64-bit, no flags, LSL #0.
+     */
+    if ((insn & 0xFFE0FC00u) != 0x8B000000u)
+        return NO;
+
+    if (rd)
+        *rd = insn & 0x1Fu;
+
+    if (rn)
+        *rn = (insn >> 5) & 0x1Fu;
+
+    if (rm)
+        *rm = (insn >> 16) & 0x1Fu;
+
+    return YES;
+}
+
+
+bool pxQoLDecodeADD64ImmediateNoShift(uint32_t insn,
+                                           uint32_t *rd,
+                                           uint32_t *rn,
+                                           uint32_t *imm12)
+{
+    /*
+     * ADD Xd, Xn, #imm12
+     *
+     * 64-bit, no flags, shift = 0.
+     */
+    if ((insn & 0xFFC00000u) != 0x91000000u)
+        return NO;
+
+    if (rd)
+        *rd = insn & 0x1Fu;
+
+    if (rn)
+        *rn = (insn >> 5) & 0x1Fu;
+
+    if (imm12)
+        *imm12 = (insn >> 10) & 0xFFFu;
+
+    return YES;
+}
+
+
+bool pxQoLDecodeMovReg(uint32_t insn,
+                            uint32_t *dstReg,
+                            uint32_t *srcReg)
 {
     /*
      * MOV Xd, Xn
@@ -115,14 +167,80 @@ bool pxQoLIsMovReg(uint32_t insn,
     if ((insn & 0xFFE0FFE0u) != 0xAA0003E0u)
         return NO;
 
-    uint32_t rm = (insn >> 16) & 0x1Fu;
-    uint32_t rn = (insn >> 5) & 0x1Fu;
-    uint32_t rd = insn & 0x1Fu;
+    if (dstReg)
+        *dstReg = insn & 0x1Fu;
 
-    if (rn != 31)
+    if (srcReg)
+        *srcReg = (insn >> 16) & 0x1Fu;
+
+    return YES;
+}
+
+
+bool pxQoLIsMovReg(uint32_t insn,
+                        uint32_t dstReg,
+                        uint32_t srcReg)
+{
+    uint32_t decodedDst = 0;
+    uint32_t decodedSrc = 0;
+
+    if (!pxQoLDecodeMovReg(
+            insn,
+            &decodedDst,
+            &decodedSrc))
         return NO;
 
-    return rd == dstReg && rm == srcReg;
+    return
+        decodedDst == dstReg &&
+        decodedSrc == srcReg;
+}
+
+
+bool pxQoLDecodeLDUR64(uint32_t insn,
+                            uint32_t *rt,
+                            uint32_t *rn,
+                            int32_t *imm9)
+{
+    /*
+     * LDUR Xt, [Xn, #simm9]
+     */
+    if ((insn & 0xFFE00C00u) != 0xF8400000u)
+        return NO;
+
+    uint32_t raw =
+        (insn >> 12) & 0x1FFu;
+
+    int32_t signedImm =
+        (raw & 0x100u)
+            ? (int32_t)(raw | 0xFFFFFE00u)
+            : (int32_t)raw;
+
+    if (rt)
+        *rt = insn & 0x1Fu;
+
+    if (rn)
+        *rn = (insn >> 5) & 0x1Fu;
+
+    if (imm9)
+        *imm9 = signedImm;
+
+    return YES;
+}
+
+
+bool pxQoLDecodeBLR(uint32_t insn,
+                         uint32_t *rn)
+{
+    /*
+     * BLR Xn
+     */
+    if ((insn & 0xFFFFFC1Fu) != 0xD63F0000u)
+        return NO;
+
+    if (rn)
+        *rn = (insn >> 5) & 0x1Fu;
+
+    return YES;
 }
 
 
