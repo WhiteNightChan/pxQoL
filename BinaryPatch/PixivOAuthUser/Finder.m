@@ -18,6 +18,9 @@ static const char *pxqInitialUserStateVariantName(
         case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT:
             return "TYPE_REF_X2_ASSIGNMENT";
 
+        case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT:
+            return "TYPE_REF_X2_COPY_ASSIGNMENT";
+
         default:
             return "NONE";
     }

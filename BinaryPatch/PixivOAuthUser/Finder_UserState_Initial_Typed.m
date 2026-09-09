@@ -780,6 +780,254 @@ static bool pxqParseInitialUserStateVariantCCaller(
 }
 
 
+static bool pxqParseInitialUserStateTypedCopyCaller(
+    uint8_t *text,
+    unsigned long textSize,
+    const uint32_t *insns,
+    size_t count,
+    size_t i,
+    pxqInitialUserStateVariantCCandidate *candidate
+)
+{
+    if (!text ||
+        !insns ||
+        !candidate ||
+        i < 10 ||
+        i + 2 >= count) {
+
+        return false;
+    }
+
+
+    uint32_t beginRd = 0;
+    uint32_t beginRn = 0;
+    uint32_t beginImm = 0;
+
+    uint32_t destinationDst0 = 0;
+    uint32_t destinationReg0 = 0;
+
+    uint32_t adrpRd = 0;
+    uintptr_t typePage = 0;
+
+    uint32_t typeAddRd = 0;
+    uint32_t typeAddRn = 0;
+    uint32_t typeAddImm = 0;
+
+    uint32_t sourceDst = 0;
+    uint32_t sourceReg = 0;
+
+    uint32_t destinationDst1 = 0;
+    uint32_t destinationReg1 = 0;
+
+    uint32_t typeMoveDst = 0;
+    uint32_t typeReg = 0;
+
+    uint32_t endRd = 0;
+    uint32_t endRn = 0;
+    uint32_t endImm = 0;
+
+    uintptr_t wrapper =
+        0;
+
+    uintptr_t typeRef =
+        0;
+
+
+    /*
+     * Exact Writer-A caller observed on Pixiv 8.1.3:
+     *
+     * add  x1,sp,#ACCESS_IMM
+     * mov  x0,DEST
+     * mov  w2,#0x21
+     * mov  x3,#0
+     * bl   beginAccess
+     *
+     * adrp TYPE_REG,TYPE_PAGE
+     * add  TYPE_REG,TYPE_REG,#TYPE_OFF
+     *
+     * mov  x0,SOURCE
+     * mov  x1,DEST
+     * mov  x2,TYPE_REG
+     * bl   <assignWithCopy wrapper>   <- i
+     *
+     * add  x0,sp,#ACCESS_IMM
+     * bl   endAccess
+     *
+     * This is intentionally an exact experiment fingerprint, not a
+     * generalized old-layout parser. The register allocation and
+     * ACCESS_IMM are kept fixed so the 8.1.4+ production path is not
+     * broadened while testing whether Writer A is the missing Initial
+     * state-establishing path on 8.1.3.
+     */
+
+    if (!pxQoLDecodeADD64ImmediateNoShift(
+            insns[i - 10],
+            &beginRd,
+            &beginRn,
+            &beginImm) ||
+
+        beginRd != 1 ||
+        beginRn != 31 ||
+        beginImm != 0x8 ||
+
+        !pxQoLDecodeMovReg(
+            insns[i - 9],
+            &destinationDst0,
+            &destinationReg0) ||
+
+        destinationDst0 != 0 ||
+        destinationReg0 != 23 ||
+
+        insns[i - 8] !=
+            0x52800422u ||
+
+        /*
+         * mov w2,#0x21
+         */
+
+        insns[i - 7] !=
+            0xD2800003u ||
+
+        /*
+         * mov x3,#0
+         */
+
+        !pxQoLIsBL(
+            insns[i - 6]) ||
+
+        !pxQoLDecodeADRP(
+            insns[i - 5],
+            (uintptr_t)&insns[i - 5],
+            &adrpRd,
+            &typePage) ||
+
+        adrpRd != 24 ||
+
+        !pxQoLDecodeADD64ImmediateNoShift(
+            insns[i - 4],
+            &typeAddRd,
+            &typeAddRn,
+            &typeAddImm) ||
+
+        typeAddRd != adrpRd ||
+        typeAddRn != adrpRd ||
+
+        !pxQoLDecodeMovReg(
+            insns[i - 3],
+            &sourceDst,
+            &sourceReg) ||
+
+        sourceDst != 0 ||
+        sourceReg != 22 ||
+
+        !pxQoLDecodeMovReg(
+            insns[i - 2],
+            &destinationDst1,
+            &destinationReg1) ||
+
+        destinationDst1 != 1 ||
+        destinationReg1 != 23 ||
+        destinationReg1 !=
+            destinationReg0 ||
+
+        !pxQoLDecodeMovReg(
+            insns[i - 1],
+            &typeMoveDst,
+            &typeReg) ||
+
+        typeMoveDst != 2 ||
+        typeReg != 24 ||
+        typeReg != adrpRd ||
+
+        !pxQoLIsBL(
+            insns[i]) ||
+
+        !pxQoLDecodeADD64ImmediateNoShift(
+            insns[i + 1],
+            &endRd,
+            &endRn,
+            &endImm) ||
+
+        endRd != 0 ||
+        endRn != 31 ||
+        endImm != beginImm ||
+
+        !pxQoLIsBL(
+            insns[i + 2])) {
+
+        return false;
+    }
+
+
+    if (destinationReg0 == 31 ||
+        sourceReg == 31 ||
+        destinationReg0 ==
+            sourceReg ||
+        typeReg == destinationReg0 ||
+        typeReg == sourceReg) {
+
+        return false;
+    }
+
+
+    if ((uint64_t)typeAddImm >
+        (uint64_t)UINTPTR_MAX -
+        (uint64_t)typePage) {
+
+        return false;
+    }
+
+
+    typeRef =
+        typePage +
+        (uintptr_t)typeAddImm;
+
+
+    if (!pxQoLDecodeBLTarget(
+            insns[i],
+            (uintptr_t)&insns[i],
+            &wrapper) ||
+
+        !pxqInText(
+            text,
+            textSize,
+            wrapper,
+            sizeof(uint32_t))) {
+
+        return false;
+    }
+
+
+    memset(
+        candidate,
+        0,
+        sizeof(*candidate)
+    );
+
+
+    candidate->callsite =
+        (uintptr_t)&insns[i];
+
+    candidate->wrapper =
+        wrapper;
+
+    candidate->typeRef =
+        typeRef;
+
+    candidate->sourceReg =
+        sourceReg;
+
+    candidate->destinationReg =
+        destinationReg0;
+
+    candidate->stackImm =
+        beginImm;
+
+
+    return true;
+}
+
+
 static bool pxqValidatePixivOAuthUserDescriptor(
     uint8_t *text,
     unsigned long textSize,
@@ -1222,6 +1470,241 @@ static bool pxqResolveVariantCTypeRef(
 }
 
 
+static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
+    uint8_t *text,
+    unsigned long textSize,
+    pxQoLPixivOAuthUserInitialUserStateMatch *match
+)
+{
+    if (!text ||
+        textSize == 0 ||
+        !match) {
+
+        return false;
+    }
+
+
+    const uint32_t *insns =
+        (const uint32_t *)text;
+
+    const size_t count =
+        textSize /
+        sizeof(uint32_t);
+
+
+    size_t exactShapeCount =
+        0;
+
+    size_t semanticTypeRejected =
+        0;
+
+    size_t promotedCount =
+        0;
+
+
+    pxqInitialUserStateVariantCCandidate promotedCandidate;
+
+    memset(
+        &promotedCandidate,
+        0,
+        sizeof(promotedCandidate)
+    );
+
+
+    uintptr_t promotedDescriptor =
+        0;
+
+    uintptr_t promotedMetadataAccessor =
+        0;
+
+    uint32_t promotedFieldCount =
+        0;
+
+    uint32_t promotedFieldVectorOffset =
+        0;
+
+
+    for (size_t i = 10;
+         i + 2 < count;
+         i++) {
+
+        pxqInitialUserStateVariantCCandidate candidate;
+
+
+        if (!pxqParseInitialUserStateTypedCopyCaller(
+                text,
+                textSize,
+                insns,
+                count,
+                i,
+                &candidate)) {
+
+            continue;
+        }
+
+
+        exactShapeCount++;
+
+
+        uintptr_t descriptor =
+            0;
+
+        uintptr_t metadataAccessor =
+            0;
+
+        uint32_t descriptorFields =
+            0;
+
+        uint32_t fieldVectorOffset =
+            0;
+
+
+        /*
+         * The exact Writer-A caller already proves the x0/x1/x2 ABI.
+         * Require the x2 cache cell to resolve semantically to
+         * Optional<PixivOAuthUser>; do not generalize the existing C1
+         * wrapper validator for this experiment.
+         */
+        if (!pxqResolveVariantCTypeRef(
+                text,
+                textSize,
+                candidate.typeRef,
+                &descriptor,
+                &metadataAccessor,
+                &descriptorFields,
+                &fieldVectorOffset)) {
+
+            semanticTypeRejected++;
+
+            pxQoLLog(
+                @"[PixivOAuthUser/Finder] Typed Copy A structural candidate #%zu rejected: typeRef is not proven Optional<PixivOAuthUser> callsite=text+0x%llx typeRef=%p",
+                exactShapeCount,
+                (unsigned long long)(
+                    candidate.callsite -
+                    (uintptr_t)text
+                ),
+                (void *)candidate.typeRef
+            );
+
+            continue;
+        }
+
+
+        promotedCount++;
+
+
+        pxQoLLog(
+            @"[PixivOAuthUser/Finder] Typed Copy A semantic candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx source=x%u destination=x%u stackImm=0x%x typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+            promotedCount,
+            (unsigned long long)(
+                candidate.callsite -
+                (uintptr_t)text
+            ),
+            (unsigned long long)(
+                candidate.wrapper -
+                (uintptr_t)text
+            ),
+            candidate.sourceReg,
+            candidate.destinationReg,
+            candidate.stackImm,
+            (void *)candidate.typeRef,
+            (void *)descriptor,
+            (unsigned long long)(
+                metadataAccessor -
+                (uintptr_t)text
+            ),
+            descriptorFields,
+            fieldVectorOffset
+        );
+
+
+        if (promotedCount == 1) {
+
+            promotedCandidate =
+                candidate;
+
+            promotedDescriptor =
+                descriptor;
+
+            promotedMetadataAccessor =
+                metadataAccessor;
+
+            promotedFieldCount =
+                descriptorFields;
+
+            promotedFieldVectorOffset =
+                fieldVectorOffset;
+        }
+    }
+
+
+    pxQoLLog(
+        @"[PixivOAuthUser/Finder] Typed Copy A summary: exactShape=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
+        exactShapeCount,
+        semanticTypeRejected,
+        promotedCount
+    );
+
+
+    if (promotedCount != 1) {
+
+        pxQoLLog(
+            @"[PixivOAuthUser/Finder] Typed Copy A rejected: expected exactly 1 semantic Optional<PixivOAuthUser> InitialUserState candidate, got %zu",
+            promotedCount
+        );
+
+        return false;
+    }
+
+
+    memset(
+        match,
+        0,
+        sizeof(*match)
+    );
+
+
+    match->variant =
+        PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT;
+
+    match->callsites[0] =
+        promotedCandidate.callsite;
+
+    match->callsiteCount =
+        1;
+
+    match->originalWrapper =
+        promotedCandidate.wrapper;
+
+    match->pixivOAuthUserMetadataAccessor =
+        promotedMetadataAccessor;
+
+
+    pxQoLLog(
+        @"[PixivOAuthUser/Finder] Typed Copy A resolved: callsite=text+0x%llx wrapper=text+0x%llx typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+        (unsigned long long)(
+            match->callsites[0] -
+            (uintptr_t)text
+        ),
+        (unsigned long long)(
+            match->originalWrapper -
+            (uintptr_t)text
+        ),
+        (void *)promotedCandidate.typeRef,
+        (void *)promotedDescriptor,
+        (unsigned long long)(
+            match->pixivOAuthUserMetadataAccessor -
+            (uintptr_t)text
+        ),
+        promotedFieldCount,
+        promotedFieldVectorOffset
+    );
+
+
+    return true;
+}
+
+
 bool pxqResolveVariantCInitialUserStateAndMetadata(
     uint8_t *text,
     unsigned long textSize,
@@ -1470,6 +1953,35 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
      * callsite proximity, and app-version numbers do not
      * participate.
      */
+
+    if (promotedCount == 0) {
+
+        pxQoLLog(
+            @"[PixivOAuthUser/Finder] Variant C produced no semantic candidate; trying Typed Copy fallback"
+        );
+
+
+        pxQoLPixivOAuthUserInitialUserStateMatch typedCopyMatch;
+
+        memset(
+            &typedCopyMatch,
+            0,
+            sizeof(typedCopyMatch)
+        );
+
+
+        if (pxqResolveTypedCopyInitialUserStateAndMetadata(
+                text,
+                textSize,
+                &typedCopyMatch)) {
+
+            *match =
+                typedCopyMatch;
+
+            return true;
+        }
+    }
+
 
     if (promotedCount != 1) {
 

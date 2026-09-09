@@ -32,7 +32,22 @@ typedef enum {
      * Finder support is implemented as the semantic fallback.
      * Patch-side ABI support remains a separate step.
      */
-    PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT = 2
+    PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT = 2,
+
+    /*
+     * Legacy typed copy-assignment InitialUserState layout:
+     *
+     *   x0 = source
+     *   x1 = destination
+     *   x2 = type-reference/cache cell
+     *   bl  assignmentWrapper
+     *
+     * The wrapper uses the Swift VWT assignWithCopy operation.
+     *
+     * This remains a separate semantic variant even though its
+     * register ABI matches TYPE_REF_X2_ASSIGNMENT.
+     */
+    PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT = 3
 
 } pxQoLPixivOAuthUserInitialUserStateVariant;
 

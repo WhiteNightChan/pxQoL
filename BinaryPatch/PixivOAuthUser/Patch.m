@@ -414,11 +414,15 @@ static bool pxqForcePremium(
  *   x0 = source
  *   x1 = destination
  *
- * TYPE_REF_X2_ASSIGNMENT:
+ * TYPE_REF_X2_ASSIGNMENT / TYPE_REF_X2_COPY_ASSIGNMENT:
  *
  *   x0 = source
  *   x1 = destination
  *   x2 = Optional<PixivOAuthUser> type-reference/cache cell
+ *
+ * Both typed variants share this register ABI. Their original wrappers
+ * differ in Swift VWT operation, but the trampoline always forwards the
+ * untouched x0/x1/x2 tuple to the exact wrapper resolved by Finder.
  *
  * Both paths execute the original Swift assignment first.
  */
@@ -718,21 +722,33 @@ BOOL pxQoLPatchPixivOAuthUserPremium(void)
         (match.initialUserState.variant ==
             PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TWO_ARG_ASSIGNMENT ||
          match.initialUserState.variant ==
-            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT);
+            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT ||
+         match.initialUserState.variant ==
+            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT);
+
+
+    bool initialUserStateTypedVariant =
+        (match.initialUserState.variant ==
+            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT ||
+         match.initialUserState.variant ==
+            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT);
+
+
+    bool derivedUserStateCountValid =
+        (match.derivedUserState.finalizeCount > 0 &&
+         match.derivedUserState.finalizeCount <=
+            PXQ_PIXIV_OAUTH_USER_MAX_DERIVED_USER_STATE_FINALIZERS);
 
 
     if (!initialUserStateVariantSupported ||
         match.initialUserState.callsiteCount == 0 ||
         match.initialUserState.callsiteCount >
             PXQ_PIXIV_OAUTH_USER_MAX_INITIAL_USER_STATE_CALLSITES ||
-        (match.initialUserState.variant ==
-            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT &&
+        (initialUserStateTypedVariant &&
          match.initialUserState.callsiteCount != 1) ||
         match.initialUserState.originalWrapper == 0 ||
         match.initialUserState.pixivOAuthUserMetadataAccessor == 0 ||
-        match.derivedUserState.finalizeCount == 0 ||
-        match.derivedUserState.finalizeCount >
-            PXQ_PIXIV_OAUTH_USER_MAX_DERIVED_USER_STATE_FINALIZERS) {
+        !derivedUserStateCountValid) {
 
         pxQoLLog(
             @"[PixivOAuthUser] FAIL [4] invalid finder result"
@@ -855,6 +871,7 @@ BOOL pxQoLPatchPixivOAuthUserPremium(void)
             break;
 
         case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT:
+        case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT:
             initialUserStateTrampolineAddress =
                 (uintptr_t)
                 &pxQoLInitialUserStateTypedPremiumTrampoline;
@@ -998,6 +1015,7 @@ BOOL pxQoLPatchPixivOAuthUserPremium(void)
             break;
 
         case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT:
+        case PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT:
             gInitialUserStateTypedOriginalWrapper =
                 (PXQInitialUserStateTypedAssignmentWrapperFunc)
                 match.initialUserState.originalWrapper;

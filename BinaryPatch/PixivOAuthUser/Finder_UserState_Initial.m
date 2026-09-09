@@ -105,17 +105,36 @@ bool pxQoLFindPixivOAuthUserInitialUserState(
     }
 
 
-    variantCMatch.variant =
-        PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT;
+    /*
+     * The existing Variant-C resolver leaves variant as NONE.
+     * The legacy typed-copy fallback sets its distinct semantic
+     * variant itself so Finder/Patch can keep that experiment isolated
+     * from DerivedUserState patching.
+     */
+    if (variantCMatch.variant ==
+        PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_NONE) {
+
+        variantCMatch.variant =
+            PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_ASSIGNMENT;
+    }
 
 
     *match =
         variantCMatch;
 
 
-    pxQoLLog(
-        @"[PixivOAuthUser/Finder] InitialUserState/metadata resolution mode=VARIANT-C variant=TYPE_REF_X2_ASSIGNMENT"
-    );
+    if (variantCMatch.variant ==
+        PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT) {
+
+        pxQoLLog(
+            @"[PixivOAuthUser/Finder] InitialUserState/metadata resolution mode=VARIANT-C variant=TYPE_REF_X2_COPY_ASSIGNMENT"
+        );
+    }
+    else {
+        pxQoLLog(
+            @"[PixivOAuthUser/Finder] InitialUserState/metadata resolution mode=VARIANT-C variant=TYPE_REF_X2_ASSIGNMENT"
+        );
+    }
 
 
     return true;

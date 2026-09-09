@@ -3,8 +3,55 @@
 @implementation LogHelper
 
 + (NSString *)logFilePath {
-    return [NSTemporaryDirectory()
-        stringByAppendingPathComponent:@"pxQoL-patch-log.txt"];
+    static NSString *path = nil;
+
+    @synchronized(self) {
+        if (!path) {
+            NSString *version =
+                [[NSBundle mainBundle]
+                    objectForInfoDictionaryKey:
+                        @"CFBundleShortVersionString"];
+
+            if (![version isKindOfClass:[NSString class]] ||
+                version.length == 0) {
+
+                version = @"unknown";
+            }
+
+            NSDateFormatter *formatter =
+                [[NSDateFormatter alloc] init];
+
+            formatter.locale =
+                [[NSLocale alloc]
+                    initWithLocaleIdentifier:@"en_US_POSIX"];
+
+            formatter.calendar =
+                [[NSCalendar alloc]
+                    initWithCalendarIdentifier:
+                        NSCalendarIdentifierGregorian];
+
+            formatter.timeZone =
+                [NSTimeZone localTimeZone];
+
+            formatter.dateFormat =
+                @"yyyyMMdd-HHmmss";
+
+            NSString *timestamp =
+                [formatter stringFromDate:[NSDate date]];
+
+            NSString *fileName =
+                [NSString stringWithFormat:
+                    @"pxQoL-patch-log_v%@_%@.txt",
+                    version,
+                    timestamp];
+
+            path =
+                [NSTemporaryDirectory()
+                    stringByAppendingPathComponent:fileName];
+        }
+    }
+
+    return path;
 }
 
 + (void)appendLine:(NSString *)line {
