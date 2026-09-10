@@ -557,6 +557,121 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 }
 
 
+static bool pxqValidateInitialUserStateTypedCopyWrapper(
+    uint8_t *text,
+    unsigned long textSize,
+    uintptr_t wrapper
+)
+{
+    const size_t scanSize =
+        0x50;
+
+
+    if (!pxqInText(
+            text,
+            textSize,
+            wrapper,
+            scanSize)) {
+
+        return false;
+    }
+
+
+    const uint32_t *insns =
+        (const uint32_t *)wrapper;
+
+    const size_t count =
+        scanSize /
+        sizeof(uint32_t);
+
+
+    /*
+     * Typed-copy wrapper proof:
+     *
+     * resolve metadata
+     *   -> metadata VWT at [metadata - 8]
+     *   -> VWT slot +0x18
+     *   -> indirect call through that slot
+     *
+     * +0x18 is the Swift VWT assignWithCopy operation.
+     *
+     * Do not require a specific prologue or saved-register allocation.
+     * Those are compiler-allocation details and differ independently
+     * from the x0/x1/x2 call ABI.
+     */
+
+    for (size_t i = 0;
+         i + 2 < count;
+         i++) {
+
+        uint32_t vwtReg = 0;
+        uint32_t metadataReg = 0;
+        int32_t vwtImm = 0;
+
+        uint32_t functionReg = 0;
+        uint32_t loadBaseReg = 0;
+        uint32_t loadImm = 0;
+
+
+        if (!pxQoLDecodeLDUR64(
+                insns[i],
+                &vwtReg,
+                &metadataReg,
+                &vwtImm) ||
+
+            vwtImm != -8 ||
+
+            !pxQoLIsLDR64UnsignedImm(
+                insns[i + 1],
+                &functionReg,
+                &loadBaseReg,
+                &loadImm) ||
+
+            loadBaseReg != vwtReg ||
+
+            loadImm != 3) {
+
+            /*
+             * 0x18 / sizeof(uintptr_t) = 3
+             */
+            continue;
+        }
+
+
+        /*
+         * The call-through may be separated from the VWT load by
+         * register moves that prepare source/destination.
+         */
+
+        size_t callEnd =
+            i + 6;
+
+        if (callEnd > count)
+            callEnd = count;
+
+
+        for (size_t j = i + 2;
+             j < callEnd;
+             j++) {
+
+            uint32_t blrRn = 0;
+
+
+            if (pxQoLDecodeBLR(
+                    insns[j],
+                    &blrRn) &&
+                blrRn == functionReg) {
+
+                return true;
+            }
+        }
+    }
+
+
+    return false;
+}
+
+
 static bool pxqParseInitialUserStateVariantCCaller(
     uint8_t *text,
     unsigned long textSize,
@@ -834,7 +949,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
 
 
     /*
-     * Exact Writer-A caller observed on Pixiv 8.1.3:
+     * Writer-A family caller:
      *
      * add  x1,sp,#ACCESS_IMM
      * mov  x0,DEST
@@ -853,11 +968,16 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
      * add  x0,sp,#ACCESS_IMM
      * bl   endAccess
      *
-     * This is intentionally an exact experiment fingerprint, not a
-     * generalized old-layout parser. The register allocation and
-     * ACCESS_IMM are kept fixed so the 8.1.4+ production path is not
-     * broadened while testing whether Writer A is the missing Initial
-     * state-establishing path on 8.1.3.
+     * The call ABI and data-flow relationships are fixed. The compiler's
+     * saved-register allocation and ACCESS_IMM are not.
+     *
+     * Confirmed layouts include:
+     *
+     * 8.1.3:
+     *   source=x22 destination=x23 type=x24 ACCESS_IMM=0x8
+     *
+     * 7.20.1:
+     *   source=x23 destination=x24 type=x19 ACCESS_IMM=0x28
      */
 
     if (!pxQoLDecodeADD64ImmediateNoShift(
@@ -868,7 +988,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
 
         beginRd != 1 ||
         beginRn != 31 ||
-        beginImm != 0x8 ||
 
         !pxQoLDecodeMovReg(
             insns[i - 9],
@@ -876,7 +995,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
             &destinationReg0) ||
 
         destinationDst0 != 0 ||
-        destinationReg0 != 23 ||
 
         insns[i - 8] !=
             0x52800422u ||
@@ -901,8 +1019,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
             &adrpRd,
             &typePage) ||
 
-        adrpRd != 24 ||
-
         !pxQoLDecodeADD64ImmediateNoShift(
             insns[i - 4],
             &typeAddRd,
@@ -918,7 +1034,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
             &sourceReg) ||
 
         sourceDst != 0 ||
-        sourceReg != 22 ||
 
         !pxQoLDecodeMovReg(
             insns[i - 2],
@@ -926,7 +1041,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
             &destinationReg1) ||
 
         destinationDst1 != 1 ||
-        destinationReg1 != 23 ||
         destinationReg1 !=
             destinationReg0 ||
 
@@ -936,7 +1050,6 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
             &typeReg) ||
 
         typeMoveDst != 2 ||
-        typeReg != 24 ||
         typeReg != adrpRd ||
 
         !pxQoLIsBL(
@@ -961,6 +1074,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
 
     if (destinationReg0 == 31 ||
         sourceReg == 31 ||
+        typeReg == 31 ||
         destinationReg0 ==
             sourceReg ||
         typeReg == destinationReg0 ||
@@ -1495,6 +1609,9 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
     size_t exactShapeCount =
         0;
 
+    size_t wrapperRejected =
+        0;
+
     size_t semanticTypeRejected =
         0;
 
@@ -1546,6 +1663,30 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
         exactShapeCount++;
 
 
+        if (!pxqValidateInitialUserStateTypedCopyWrapper(
+                text,
+                textSize,
+                candidate.wrapper)) {
+
+            wrapperRejected++;
+
+            pxQoLLog(
+                @"[PixivOAuthUser/Finder] Typed Copy A structural candidate #%zu rejected: assignWithCopy wrapper validation failed callsite=text+0x%llx wrapper=text+0x%llx",
+                exactShapeCount,
+                (unsigned long long)(
+                    candidate.callsite -
+                    (uintptr_t)text
+                ),
+                (unsigned long long)(
+                    candidate.wrapper -
+                    (uintptr_t)text
+                )
+            );
+
+            continue;
+        }
+
+
         uintptr_t descriptor =
             0;
 
@@ -1560,10 +1701,9 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
 
 
         /*
-         * The exact Writer-A caller already proves the x0/x1/x2 ABI.
-         * Require the x2 cache cell to resolve semantically to
-         * Optional<PixivOAuthUser>; do not generalize the existing C1
-         * wrapper validator for this experiment.
+         * Caller data flow proves the x0/x1/x2 ABI and the dedicated
+         * wrapper validator proves assignWithCopy. Require the x2 cache
+         * cell to resolve semantically to Optional<PixivOAuthUser>.
          */
         if (!pxqResolveVariantCTypeRef(
                 text,
@@ -1639,8 +1779,9 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] Typed Copy A summary: exactShape=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
+        @"[PixivOAuthUser/Finder] Typed Copy A summary: exactShape=%zu wrapperRejected=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
         exactShapeCount,
+        wrapperRejected,
         semanticTypeRejected,
         promotedCount
     );
