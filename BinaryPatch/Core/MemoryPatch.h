@@ -1,5 +1,5 @@
-#ifndef pxQoLMemoryPatch_h
-#define pxQoLMemoryPatch_h
+#ifndef PXQ_BINARY_PATCH_MEMORY_PATCH_H
+#define PXQ_BINARY_PATCH_MEMORY_PATCH_H
 
 #include <stddef.h>
 
@@ -15,6 +15,6 @@ typedef int (*LHPatchMemoryFunc)(
     int count
 );
 
-LHPatchMemoryFunc pxQoLGetPatchMemory(void);
+LHPatchMemoryFunc pxqMemoryPatchResolveBackend(void);
 
 #endif

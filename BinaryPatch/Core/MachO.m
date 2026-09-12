@@ -1,4 +1,4 @@
-#import "pxQoLMachO.h"
+#import "MachO.h"
 
 #import <mach-o/dyld.h>
 #import <mach-o/getsect.h>
@@ -11,13 +11,21 @@
     [LogHelper appendLine:[NSString stringWithFormat:(fmt), ##__VA_ARGS__]]
 
 
-const struct mach_header_64 *pxQoLFindPixivImage(void)
+const struct mach_header_64 *pxqMachOFindLoadedImage(
+    const char *pathSubstring
+)
 {
+    if (!pathSubstring ||
+        pathSubstring[0] == '\0') {
+
+        return NULL;
+    }
+
     uint32_t imageCount =
         _dyld_image_count();
 
     pxQoLLog(
-        @"imageCount = %u",
+        @"[BinaryPatch/MachO] imageCount = %u",
         imageCount
     );
 
@@ -29,19 +37,19 @@ const struct mach_header_64 *pxQoLFindPixivImage(void)
             _dyld_get_image_name(i);
 
         if (name &&
-            strstr(name, "/pixiv.app/pixiv")) {
+            strstr(name, pathSubstring)) {
 
             const struct mach_header_64 *header =
                 (const struct mach_header_64 *)
                 _dyld_get_image_header(i);
 
             pxQoLLog(
-                @"pixiv found: index=%u",
+                @"[BinaryPatch/MachO] image found: index=%u",
                 i
             );
 
             pxQoLLog(
-                @"imageName=%s",
+                @"[BinaryPatch/MachO] imageName=%s",
                 name
             );
 
@@ -53,7 +61,7 @@ const struct mach_header_64 *pxQoLFindPixivImage(void)
 }
 
 
-uint8_t *pxQoLGetTextSection(
+uint8_t *pxqMachOGetTextSection(
     const struct mach_header_64 *header,
     unsigned long *textSize
 )

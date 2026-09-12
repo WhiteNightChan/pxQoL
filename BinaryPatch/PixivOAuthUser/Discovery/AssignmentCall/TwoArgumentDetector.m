@@ -1,11 +1,13 @@
-#import "Finder_UserState_Initial_Internal.h"
-#import "../Core/pxQoLARM64.h"
-#import "../../LogHelper.h"
+#import "AssignmentCallDiscoveryInternal.h"
+#import "../../../Core/ARM64.h"
+#import "../../../Core/MemoryAccess.h"
+#import "../../../SwiftABI/ValueWitness.h"
+#import "../../../../LogHelper.h"
 
 #include <string.h>
 
 
-static bool pxqValidateInitialUserStateWrapper(
+static bool pxqValidateTwoArgumentTakeAssignmentWrapper(
     uint8_t *text,
     unsigned long textSize,
     uintptr_t wrapper
@@ -14,9 +16,9 @@ static bool pxqValidateInitialUserStateWrapper(
     const size_t scanSize =
         0x50;
 
-    if (!pxqInText(
-            text,
-            textSize,
+    if (!pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             wrapper,
             scanSize)) {
 
@@ -44,11 +46,11 @@ static bool pxqValidateInitialUserStateWrapper(
          i + 1 < count;
          i++) {
 
-        if (pxQoLIsMovReg(
+        if (pxqARM64IsMoveRegister(
                 insns[i],
                 19,
                 1) &&
-            pxQoLIsMovReg(
+            pxqARM64IsMoveRegister(
                 insns[i + 1],
                 20,
                 0)) {
@@ -90,12 +92,12 @@ static bool pxqValidateInitialUserStateWrapper(
 
         uint32_t blrRn = 0;
 
-        if (!pxQoLIsMovReg(
+        if (!pxqARM64IsMoveRegister(
                 insns[i],
                 2,
                 0) ||
 
-            !pxQoLDecodeLDUR64(
+            !pxqARM64DecodeLDUR64(
                 insns[i + 1],
                 &ldurRt,
                 &ldurRn,
@@ -103,9 +105,10 @@ static bool pxqValidateInitialUserStateWrapper(
 
             ldurRt != 8 ||
             ldurRn != 0 ||
-            ldurImm != -8 ||
+            ldurImm !=
+                PXQ_SWIFT_VALUE_WITNESS_TABLE_METADATA_RELATIVE_OFFSET ||
 
-            !pxQoLIsLDR64UnsignedImm(
+            !pxqARM64IsLDR64UnsignedImmediate(
                 insns[i + 2],
                 &rt,
                 &rn,
@@ -113,29 +116,30 @@ static bool pxqValidateInitialUserStateWrapper(
 
             rt != 8 ||
             rn != 8 ||
-            imm12 != 5 ||
+            imm12 !=
+                PXQ_SWIFT_VALUE_WITNESS_ASSIGN_WITH_TAKE_POINTER_INDEX ||
 
             /*
              * 0x28 / 8 = 5
              */
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 3],
                 0,
                 19) ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 4],
                 1,
                 20) ||
 
-            !pxQoLDecodeBLR(
+            !pxqARM64DecodeBLR(
                 insns[i + 5],
                 &blrRn) ||
 
             blrRn != 8 ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 6],
                 0,
                 19)) {
@@ -158,14 +162,14 @@ typedef struct {
     uint32_t offsetReg;
     uint32_t sourceReg;
     uint32_t accessReg;
-} pxqGeneralizedInitialUserStateCandidate;
+} PXQTwoArgumentAssignmentCallCandidate;
 
 
-static bool pxqValidateInitialUserStateContextGeneralized(
+static bool pxqParseTwoArgumentAssignmentCallCandidate(
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqGeneralizedInitialUserStateCandidate *candidate
+    PXQTwoArgumentAssignmentCallCandidate *candidate
 )
 {
     if (!insns ||
@@ -198,7 +202,7 @@ static bool pxqValidateInitialUserStateContextGeneralized(
 
 
     /*
-     * Register-independent version of the proven InitialUserState
+     * Register-independent version of the proven AssignmentCall
      * 10-instruction context:
      *
      * add x0, BASE, OFFSET
@@ -213,7 +217,7 @@ static bool pxqValidateInitialUserStateContextGeneralized(
      * bl  ...
      */
 
-    if (!pxQoLDecodeADD64RegisterNoShift(
+    if (!pxqARM64DecodeADD64RegisterNoShift(
             insns[i - 7],
             &firstRd,
             &baseReg,
@@ -221,7 +225,7 @@ static bool pxqValidateInitialUserStateContextGeneralized(
 
         firstRd != 0 ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i - 6],
             &beginRd,
             &accessReg,
@@ -244,10 +248,10 @@ static bool pxqValidateInitialUserStateContextGeneralized(
          * mov x3,#0
          */
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i - 3]) ||
 
-        !pxQoLDecodeADD64RegisterNoShift(
+        !pxqARM64DecodeADD64RegisterNoShift(
             insns[i - 2],
             &secondRd,
             &baseReg2,
@@ -257,17 +261,17 @@ static bool pxqValidateInitialUserStateContextGeneralized(
         baseReg2 != baseReg ||
         offsetReg2 != offsetReg ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 1],
             &movRd,
             &sourceReg) ||
 
         movRd != 0 ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i]) ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i + 1],
             &endRd,
             &accessReg2,
@@ -277,7 +281,7 @@ static bool pxqValidateInitialUserStateContextGeneralized(
         accessReg2 != accessReg ||
         endImm != 0x10 ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i + 2])) {
 
         return false;
@@ -319,13 +323,13 @@ static bool pxqValidateInitialUserStateContextGeneralized(
 
 
 typedef enum {
-    PXQ_GENERALIZED_METADATA_VARIANT_A = 1,
-    PXQ_GENERALIZED_METADATA_VARIANT_B = 2
-} pxqGeneralizedMetadataVariant;
+    PXQ_METADATA_CORRELATION_BASE_OFFSET_ADDRESS = 1,
+    PXQ_METADATA_CORRELATION_VALUE_OFFSET_ARGUMENTS = 2
+} PXQMetadataCorrelationShape;
 
 
 typedef struct {
-    pxqGeneralizedMetadataVariant variant;
+    PXQMetadataCorrelationShape shape;
 
     uintptr_t accessor;
 
@@ -333,29 +337,29 @@ typedef struct {
     uint32_t witnessReg;
 
     /*
-     * Variant A:
+     * BaseOffsetAddress shape:
      *     value = BASE + OFFSET
      */
     uint32_t valueBaseReg;
     uint32_t valueOffsetReg;
 
     /*
-     * Variant B:
+     * ValueOffsetArguments shape:
      *     x0 <- VALUE
      *     x1 <- OFFSET
      */
     uint32_t valueReg;
     uint32_t offsetArgReg;
-} pxqGeneralizedMetadataGate;
+} PXQMetadataCorrelationCandidate;
 
 
-static bool pxqParseGeneralizedMetadataPrefix(
+static bool pxqParseMetadataCorrelationPrefix(
     uint8_t *text,
     unsigned long textSize,
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqGeneralizedMetadataGate *gate
+    PXQMetadataCorrelationCandidate *gate
 )
 {
     if (!text ||
@@ -385,7 +389,7 @@ static bool pxqParseGeneralizedMetadataPrefix(
      * Shared metadata prefix:
      *
      * mov  x0,#0
-     * bl   initialUserStateMetadataAccessor
+     * bl   assignmentCallMetadataAccessor
      * mov  xMETA,x0
      * ldur xVWT,[x0,#-8]
      * ldr  xWITNESS,[xVWT,#0x38]
@@ -398,26 +402,27 @@ static bool pxqParseGeneralizedMetadataPrefix(
          * mov x0,#0
          */
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i + 1]) ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i + 2],
             &metadataReg,
             &metadataSource) ||
 
         metadataSource != 0 ||
 
-        !pxQoLDecodeLDUR64(
+        !pxqARM64DecodeLDUR64(
             insns[i + 3],
             &vwtReg,
             &ldurBase,
             &ldurImm) ||
 
         ldurBase != 0 ||
-        ldurImm != -8 ||
+        ldurImm !=
+            PXQ_SWIFT_VALUE_WITNESS_TABLE_METADATA_RELATIVE_OFFSET ||
 
-        !pxQoLIsLDR64UnsignedImm(
+        !pxqARM64IsLDR64UnsignedImmediate(
             insns[i + 4],
             &witnessReg,
             &witnessBase,
@@ -442,14 +447,14 @@ static bool pxqParseGeneralizedMetadataPrefix(
     }
 
 
-    if (!pxQoLDecodeBLTarget(
+    if (!pxqARM64DecodeBLTarget(
             insns[i + 1],
             (uintptr_t)&insns[i + 1],
             &target) ||
 
-        !pxqInText(
-            text,
-            textSize,
+        !pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             target,
             sizeof(uint32_t))) {
 
@@ -476,13 +481,13 @@ static bool pxqParseGeneralizedMetadataPrefix(
 }
 
 
-static bool pxqParseGeneralizedMetadataVariantA(
+static bool pxqParseBaseOffsetMetadataCorrelation(
     uint8_t *text,
     unsigned long textSize,
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqGeneralizedMetadataGate *gate
+    PXQMetadataCorrelationCandidate *gate
 )
 {
     if (!gate ||
@@ -492,9 +497,9 @@ static bool pxqParseGeneralizedMetadataVariantA(
     }
 
 
-    pxqGeneralizedMetadataGate parsed;
+    PXQMetadataCorrelationCandidate parsed;
 
-    if (!pxqParseGeneralizedMetadataPrefix(
+    if (!pxqParseMetadataCorrelationPrefix(
             text,
             textSize,
             insns,
@@ -514,10 +519,10 @@ static bool pxqParseGeneralizedMetadataVariantA(
 
 
     /*
-     * Variant A, proven on 8.6.9:
+     * BaseOffsetAddress shape, proven on 8.6.9:
      *
      * mov  x0,#0
-     * bl   initialUserStateMetadataAccessor
+     * bl   assignmentCallMetadataAccessor
      * mov  xMETA,x0
      * ldur xVWT,[x0,#-8]
      * ldr  xWITNESS,[xVWT,#0x38]
@@ -528,11 +533,11 @@ static bool pxqParseGeneralizedMetadataVariantA(
      *
      * Production correlation requires:
      *
-     *     BASE   == InitialUserState BASE
-     *     OFFSET == InitialUserState OFFSET
+     *     BASE   == AssignmentCall BASE
+     *     OFFSET == AssignmentCall OFFSET
      */
 
-    if (!pxQoLDecodeADD64RegisterNoShift(
+    if (!pxqARM64DecodeADD64RegisterNoShift(
             insns[i + 5],
             &valueRd,
             &baseReg,
@@ -554,7 +559,7 @@ static bool pxqParseGeneralizedMetadataVariantA(
          * mov w2,#1
          */
 
-        !pxQoLDecodeBLR(
+        !pxqARM64DecodeBLR(
             insns[i + 8],
             &blrReg) ||
 
@@ -571,8 +576,8 @@ static bool pxqParseGeneralizedMetadataVariantA(
     }
 
 
-    parsed.variant =
-        PXQ_GENERALIZED_METADATA_VARIANT_A;
+    parsed.shape =
+        PXQ_METADATA_CORRELATION_BASE_OFFSET_ADDRESS;
 
     parsed.valueBaseReg =
         baseReg;
@@ -587,13 +592,13 @@ static bool pxqParseGeneralizedMetadataVariantA(
 }
 
 
-static bool pxqParseGeneralizedMetadataVariantB(
+static bool pxqParseValueOffsetMetadataCorrelation(
     uint8_t *text,
     unsigned long textSize,
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqGeneralizedMetadataGate *gate
+    PXQMetadataCorrelationCandidate *gate
 )
 {
     if (!gate ||
@@ -603,9 +608,9 @@ static bool pxqParseGeneralizedMetadataVariantB(
     }
 
 
-    pxqGeneralizedMetadataGate parsed;
+    PXQMetadataCorrelationCandidate parsed;
 
-    if (!pxqParseGeneralizedMetadataPrefix(
+    if (!pxqParseMetadataCorrelationPrefix(
             text,
             textSize,
             insns,
@@ -630,10 +635,10 @@ static bool pxqParseGeneralizedMetadataVariantB(
 
 
     /*
-     * Variant B, proven on 8.8.1:
+     * ValueOffsetArguments shape, proven on 8.8.1:
      *
      * mov  x0,#0
-     * bl   initialUserStateMetadataAccessor
+     * bl   assignmentCallMetadataAccessor
      * mov  xMETA,x0
      * ldur xVWT,[x0,#-8]
      * ldr  xWITNESS,[xVWT,#0x38]
@@ -645,7 +650,7 @@ static bool pxqParseGeneralizedMetadataVariantB(
      *
      * Production correlation requires:
      *
-     *     OFFSET == InitialUserState OFFSET
+     *     OFFSET == AssignmentCall OFFSET
      *
      * x3 must carry the metadata returned by the accessor.
      * VALUE is deliberately not tied to a fixed physical
@@ -653,14 +658,14 @@ static bool pxqParseGeneralizedMetadataVariantB(
      * such a constraint.
      */
 
-    if (!pxQoLDecodeMovReg(
+    if (!pxqARM64DecodeMoveRegister(
             insns[i + 5],
             &arg0Dst,
             &valueReg) ||
 
         arg0Dst != 0 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i + 6],
             &arg1Dst,
             &offsetArgReg) ||
@@ -674,7 +679,7 @@ static bool pxqParseGeneralizedMetadataVariantB(
          * mov w2,#1
          */
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i + 8],
             &metadataArgDst,
             &metadataArgSrc) ||
@@ -683,7 +688,7 @@ static bool pxqParseGeneralizedMetadataVariantB(
         metadataArgSrc !=
             parsed.metadataReg ||
 
-        !pxQoLDecodeBLR(
+        !pxqARM64DecodeBLR(
             insns[i + 9],
             &blrReg) ||
 
@@ -700,8 +705,8 @@ static bool pxqParseGeneralizedMetadataVariantB(
     }
 
 
-    parsed.variant =
-        PXQ_GENERALIZED_METADATA_VARIANT_B;
+    parsed.shape =
+        PXQ_METADATA_CORRELATION_VALUE_OFFSET_ARGUMENTS;
 
     parsed.valueReg =
         valueReg;
@@ -716,17 +721,17 @@ static bool pxqParseGeneralizedMetadataVariantB(
 }
 
 
-bool pxqResolveGeneralizedInitialUserStateAndMetadata(
+PXQAssignmentCallResolutionStatus pxqDetectTwoArgumentAssignmentCall(
     uint8_t *text,
     unsigned long textSize,
-    pxQoLPixivOAuthUserInitialUserStateMatch *match
+    PXQPixivOAuthUserAssignmentCallContract *match
 )
 {
     if (!text ||
         textSize == 0 ||
         !match) {
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_INTERNAL_FAILURE;
     }
 
 
@@ -748,12 +753,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
      * requirements are applied.
      */
     enum {
-        PXQ_GENERALIZED_MAX_STRUCTURAL_CANDIDATES = 64
+        PXQ_MAX_TWO_ARGUMENT_ASSIGNMENT_CALL_CANDIDATES = 64
     };
 
 
-    pxqGeneralizedInitialUserStateCandidate structuralCandidates[
-        PXQ_GENERALIZED_MAX_STRUCTURAL_CANDIDATES
+    PXQTwoArgumentAssignmentCallCandidate structuralCandidates[
+        PXQ_MAX_TWO_ARGUMENT_ASSIGNMENT_CALL_CANDIDATES
     ];
 
     memset(
@@ -775,12 +780,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
     /*
      * ---------------------------------------------------------
-     * Phase 1: collect structural InitialUserState candidates
+     * Phase 1: collect structural AssignmentCall candidates
      * ---------------------------------------------------------
      *
      * A candidate must satisfy:
      *
-     * - register-independent proven 10-instruction InitialUserState context
+     * - register-independent proven 10-instruction AssignmentCall context
      * - BL target resolves into __text
      * - BL target validates as the proven VWT+0x28 assignment wrapper
      *
@@ -796,7 +801,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
          i + 2 < count;
          i++) {
 
-        pxqGeneralizedInitialUserStateCandidate candidate;
+        PXQTwoArgumentAssignmentCallCandidate candidate;
 
         memset(
             &candidate,
@@ -805,7 +810,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
         );
 
 
-        if (!pxqValidateInitialUserStateContextGeneralized(
+        if (!pxqParseTwoArgumentAssignmentCallCandidate(
                 insns,
                 count,
                 i,
@@ -825,12 +830,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
             0;
 
 
-        if (!pxQoLDecodeBLTarget(
+        if (!pxqARM64DecodeBLTarget(
                 insns[i],
                 callsite,
                 &wrapper) ||
 
-            !pxqValidateInitialUserStateWrapper(
+            !pxqValidateTwoArgumentTakeAssignmentWrapper(
                 text,
                 textSize,
                 wrapper)) {
@@ -842,14 +847,14 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
         if (structuralCandidateCount >=
-            PXQ_GENERALIZED_MAX_STRUCTURAL_CANDIDATES) {
+            PXQ_MAX_TWO_ARGUMENT_ASSIGNMENT_CALL_CANDIDATES) {
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED rejected: more than %d structural InitialUserState candidates before metadata correlation",
-                PXQ_GENERALIZED_MAX_STRUCTURAL_CANDIDATES
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: more than %d structural AssignmentCall candidates before metadata correlation",
+                PXQ_MAX_TWO_ARGUMENT_ASSIGNMENT_CALL_CANDIDATES
             );
 
-            return false;
+            return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
         }
 
 
@@ -869,7 +874,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] GENERALIZED InitialUserState structural candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx destination=x%u+x%u source=x%u",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument AssignmentCall structural candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx destination=x%u+x%u source=x%u",
             structuralCandidateCount,
             (unsigned long long)(
                 callsite -
@@ -887,7 +892,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] GENERALIZED InitialUserState collection summary: rawContexts=%zu structuralCandidates=%zu wrapperRejected=%zu",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument AssignmentCall collection summary: rawContexts=%zu structuralCandidates=%zu wrapperRejected=%zu",
         rawContextCount,
         structuralCandidateCount,
         wrapperRejectedCount
@@ -897,10 +902,10 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
     if (structuralCandidateCount == 0) {
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] GENERALIZED rejected: no structural InitialUserState candidate survived wrapper validation"
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: no structural AssignmentCall candidate survived wrapper validation"
         );
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_NO_QUALIFIED_CANDIDATE;
     }
 
 
@@ -910,23 +915,23 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
      * ---------------------------------------------------------
      *
      * Search only in the confirmed 0x200-byte window preceding
-     * each structural InitialUserState callsite.
+     * each structural AssignmentCall callsite.
      *
-     * Variant A, proven on 8.6.9 and 8.4.8:
+     * BaseOffsetAddress shape, proven on 8.6.9 and 8.4.8:
      *
-     *     InitialUserState destination = BASE + OFFSET
+     *     AssignmentCall destination = BASE + OFFSET
      *     metadata gate value = SAME_BASE + SAME_OFFSET
      *
-     * Variant B, proven on 8.8.1:
+     * ValueOffsetArguments shape, proven on 8.8.1:
      *
-     *     InitialUserState destination uses OFFSET
+     *     AssignmentCall destination uses OFFSET
      *     metadata witness x1 receives SAME_OFFSET
      *     metadata witness x3 receives xMETA
      *
      * A structural candidate is promoted to a correlated production
      * candidate only when:
      *
-     * - at least one semantic Variant A/B gate matches
+     * - at least one supported semantic metadata-correlation shape matches
      * - all matching gates for that candidate resolve to one accessor
      *
      * Candidates with no semantic match are ignored.
@@ -938,12 +943,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
         sizeof(uint32_t);
 
 
-    pxqGeneralizedInitialUserStateCandidate correlatedCandidates[
-        PXQ_PIXIV_OAUTH_USER_MAX_INITIAL_USER_STATE_CALLSITES
+    PXQTwoArgumentAssignmentCallCandidate correlatedCandidates[
+        PXQ_PIXIV_OAUTH_USER_MAX_ASSIGNMENT_CALL_SITES
     ];
 
     uintptr_t correlatedAccessors[
-        PXQ_PIXIV_OAUTH_USER_MAX_INITIAL_USER_STATE_CALLSITES
+        PXQ_PIXIV_OAUTH_USER_MAX_ASSIGNMENT_CALL_SITES
     ];
 
     memset(
@@ -965,10 +970,10 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
     size_t totalStructuralMatches =
         0;
 
-    size_t totalVariantAMatches =
+    size_t totalBaseOffsetAddressMatches =
         0;
 
-    size_t totalVariantBMatches =
+    size_t totalValueOffsetArgumentsMatches =
         0;
 
     size_t ambiguousCandidateCount =
@@ -979,7 +984,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
          c < structuralCandidateCount;
          c++) {
 
-        const pxqGeneralizedInitialUserStateCandidate *candidate =
+        const PXQTwoArgumentAssignmentCallCandidate *candidate =
             &structuralCandidates[c];
 
 
@@ -1000,10 +1005,10 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
         size_t localStructuralMatches =
             0;
 
-        size_t localVariantAMatches =
+        size_t localBaseOffsetAddressMatches =
             0;
 
-        size_t localVariantBMatches =
+        size_t localValueOffsetArgumentsMatches =
             0;
 
         uintptr_t localAccessor =
@@ -1018,7 +1023,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
              i + 4 < count;
              i++) {
 
-            pxqGeneralizedMetadataGate gate;
+            PXQMetadataCorrelationCandidate gate;
 
             memset(
                 &gate,
@@ -1032,13 +1037,13 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
             /*
-             * Variant A:
-             * BASE+OFFSET must match InitialUserState exactly.
+             * BaseOffsetAddress shape:
+             * BASE+OFFSET must match AssignmentCall exactly.
              */
 
             if (i + 8 < callIndex &&
                 i + 8 < count &&
-                pxqParseGeneralizedMetadataVariantA(
+                pxqParseBaseOffsetMetadataCorrelation(
                     text,
                     textSize,
                     insns,
@@ -1055,12 +1060,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
                 matched =
                     true;
 
-                localVariantAMatches++;
-                totalVariantAMatches++;
+                localBaseOffsetAddressMatches++;
+                totalBaseOffsetAddressMatches++;
 
 
                 pxQoLLog(
-                    @"[PixivOAuthUser/Finder] GENERALIZED metadata Variant A match: initial=text+0x%llx wrapper=text+0x%llx gate=text+0x%llx accessor=text+0x%llx value=x%u+x%u",
+                    @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata BaseOffsetAddress shape match: assignmentCall=text+0x%llx wrapper=text+0x%llx gate=text+0x%llx accessor=text+0x%llx value=x%u+x%u",
                     (unsigned long long)(
                         candidate->callsite -
                         (uintptr_t)text
@@ -1084,11 +1089,11 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
             /*
-             * Variant B:
+             * ValueOffsetArguments shape:
              * x1 must receive the same OFFSET register used
-             * by InitialUserState.
+             * by AssignmentCall.
              *
-             * Only try Variant B if Variant A did not already
+             * Only try ValueOffsetArguments shape if BaseOffsetAddress shape did not already
              * accept this gate.
              */
 
@@ -1103,7 +1108,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
                 if (i + 9 < callIndex &&
                     i + 9 < count &&
-                    pxqParseGeneralizedMetadataVariantB(
+                    pxqParseValueOffsetMetadataCorrelation(
                         text,
                         textSize,
                         insns,
@@ -1117,12 +1122,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
                     matched =
                         true;
 
-                    localVariantBMatches++;
-                    totalVariantBMatches++;
+                    localValueOffsetArgumentsMatches++;
+                    totalValueOffsetArgumentsMatches++;
 
 
                     pxQoLLog(
-                        @"[PixivOAuthUser/Finder] GENERALIZED metadata Variant B match: initial=text+0x%llx wrapper=text+0x%llx gate=text+0x%llx accessor=text+0x%llx witnessArgs=x0<-x%u x1<-x%u x3<-x%u",
+                        @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata ValueOffsetArguments shape match: assignmentCall=text+0x%llx wrapper=text+0x%llx gate=text+0x%llx accessor=text+0x%llx witnessArgs=x0<-x%u x1<-x%u x3<-x%u",
                         (unsigned long long)(
                             candidate->callsite -
                             (uintptr_t)text
@@ -1172,7 +1177,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
         if (localStructuralMatches == 0) {
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=0 variantA=0 variantB=0 correlated=0",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=0 baseOffsetAddress=0 valueOffsetArguments=0 correlated=0",
                 c,
                 (unsigned long long)(
                     candidate->callsite -
@@ -1194,7 +1199,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
             ambiguousCandidateCount++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=%zu variantA=%zu variantB=%zu correlated=0 accessor=<ambiguous>",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=%zu baseOffsetAddress=%zu valueOffsetArguments=%zu correlated=0 accessor=<ambiguous>",
                 c,
                 (unsigned long long)(
                     candidate->callsite -
@@ -1205,8 +1210,8 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
                     (uintptr_t)text
                 ),
                 localStructuralMatches,
-                localVariantAMatches,
-                localVariantBMatches
+                localBaseOffsetAddressMatches,
+                localValueOffsetArgumentsMatches
             );
 
             continue;
@@ -1217,14 +1222,14 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
         if (correlatedCandidateCount >
-            PXQ_PIXIV_OAUTH_USER_MAX_INITIAL_USER_STATE_CALLSITES) {
+            PXQ_PIXIV_OAUTH_USER_MAX_ASSIGNMENT_CALL_SITES) {
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED rejected: more than %d metadata-correlated InitialUserState candidates",
-                PXQ_PIXIV_OAUTH_USER_MAX_INITIAL_USER_STATE_CALLSITES
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: more than %d metadata-correlated AssignmentCall candidates",
+                PXQ_PIXIV_OAUTH_USER_MAX_ASSIGNMENT_CALL_SITES
             );
 
-            return false;
+            return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
         }
 
 
@@ -1240,7 +1245,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] GENERALIZED metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=%zu variantA=%zu variantB=%zu correlated=1 accessor=text+0x%llx",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata summary structural[%zu]: callsite=text+0x%llx wrapper=text+0x%llx structuralMatches=%zu baseOffsetAddress=%zu valueOffsetArguments=%zu correlated=1 accessor=text+0x%llx",
             c,
             (unsigned long long)(
                 candidate->callsite -
@@ -1251,8 +1256,8 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
                 (uintptr_t)text
             ),
             localStructuralMatches,
-            localVariantAMatches,
-            localVariantBMatches,
+            localBaseOffsetAddressMatches,
+            localValueOffsetArgumentsMatches,
             (unsigned long long)(
                 localAccessor -
                 (uintptr_t)text
@@ -1262,13 +1267,13 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] GENERALIZED metadata total: structuralCandidates=%zu correlatedCandidates=%zu ambiguousCandidates=%zu structuralMatches=%zu variantA=%zu variantB=%zu",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument metadata total: structuralCandidates=%zu correlatedCandidates=%zu ambiguousCandidates=%zu structuralMatches=%zu baseOffsetAddress=%zu valueOffsetArguments=%zu",
         structuralCandidateCount,
         correlatedCandidateCount,
         ambiguousCandidateCount,
         totalStructuralMatches,
-        totalVariantAMatches,
-        totalVariantBMatches
+        totalBaseOffsetAddressMatches,
+        totalValueOffsetArgumentsMatches
     );
 
 
@@ -1280,7 +1285,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
      * Apply production invariants ONLY to metadata-correlated
      * candidates:
      *
-     * - 1..MAX correlated InitialUserState callsites
+     * - 1..MAX correlated AssignmentCall callsites
      * - all correlated candidates share one validated wrapper
      * - all correlated candidates share one metadata accessor
      */
@@ -1288,24 +1293,24 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
     if (correlatedCandidateCount == 0) {
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] GENERALIZED rejected: no semantic Variant A/B metadata gate correlated with InitialUserState"
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: no semantic metadata-correlation shape correlated with AssignmentCall"
         );
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_NO_QUALIFIED_CANDIDATE;
     }
 
 
     uintptr_t sharedWrapper =
         correlatedCandidates[0].wrapper;
 
-    uintptr_t initialUserStateMetadataAccessor =
+    uintptr_t assignmentCallMetadataAccessor =
         correlatedAccessors[0];
 
 
     if (sharedWrapper == 0 ||
-        initialUserStateMetadataAccessor == 0) {
+        assignmentCallMetadataAccessor == 0) {
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_INVALID;
     }
 
 
@@ -1317,21 +1322,21 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
             sharedWrapper) {
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED rejected: metadata-correlated InitialUserState candidates use different wrappers"
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: metadata-correlated AssignmentCall candidates use different wrappers"
             );
 
-            return false;
+            return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
         }
 
 
         if (correlatedAccessors[i] !=
-            initialUserStateMetadataAccessor) {
+            assignmentCallMetadataAccessor) {
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] GENERALIZED rejected: metadata-correlated InitialUserState candidates use different metadata accessors"
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument rejected: metadata-correlated AssignmentCall candidates use different metadata accessors"
             );
 
-            return false;
+            return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
         }
     }
 
@@ -1340,7 +1345,7 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
      * Publish only after all three phases succeed.
      */
 
-    match->callsiteCount =
+    match->callSiteCount =
         correlatedCandidateCount;
 
 
@@ -1348,24 +1353,24 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
          i < correlatedCandidateCount;
          i++) {
 
-        match->callsites[i] =
+        match->callSites[i] =
             correlatedCandidates[i].callsite;
     }
 
 
-    match->originalWrapper =
+    match->originalAssignmentWrapper =
         sharedWrapper;
 
     match->pixivOAuthUserMetadataAccessor =
-        initialUserStateMetadataAccessor;
+        assignmentCallMetadataAccessor;
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] GENERALIZED resolved: structuralCandidates=%zu correlatedCallsites=%zu wrapper=text+0x%llx metadata=text+0x%llx structuralMetadataMatches=%zu variantA=%zu variantB=%zu",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TwoArgument] TwoArgument resolved: structuralCandidates=%zu correlatedCallsites=%zu wrapper=text+0x%llx metadata=text+0x%llx structuralMetadataMatches=%zu baseOffsetAddress=%zu valueOffsetArguments=%zu",
         structuralCandidateCount,
-        match->callsiteCount,
+        match->callSiteCount,
         (unsigned long long)(
-            match->originalWrapper -
+            match->originalAssignmentWrapper -
             (uintptr_t)text
         ),
         (unsigned long long)(
@@ -1373,12 +1378,12 @@ bool pxqResolveGeneralizedInitialUserStateAndMetadata(
             (uintptr_t)text
         ),
         totalStructuralMatches,
-        totalVariantAMatches,
-        totalVariantBMatches
+        totalBaseOffsetAddressMatches,
+        totalValueOffsetArgumentsMatches
     );
 
 
-    return true;
+    return PXQ_ASSIGNMENT_CALL_RESOLUTION_RESOLVED;
 }
 
 

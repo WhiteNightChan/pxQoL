@@ -1,124 +1,121 @@
-#ifndef pxQoLARM64_h
-#define pxQoLARM64_h
+#ifndef PXQ_BINARY_PATCH_ARM64_H
+#define PXQ_BINARY_PATCH_ARM64_H
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 
-
-bool pxQoLIsADRP(
+bool pxqARM64IsADRP(
     uint32_t insn,
     uint32_t *rd
 );
 
-bool pxQoLIsLDR64UnsignedImm(
+bool pxqARM64IsLDR64UnsignedImmediate(
     uint32_t insn,
     uint32_t *rt,
     uint32_t *rn,
     uint32_t *imm12
 );
 
-bool pxQoLIsLDR64Register(
+bool pxqARM64IsLDR64Register(
     uint32_t insn,
     uint32_t *rt,
     uint32_t *rn,
     uint32_t *rm
 );
 
-bool pxQoLIsSTR64Register(
+bool pxqARM64IsSTR64Register(
     uint32_t insn,
     uint32_t *rt,
     uint32_t *rn,
     uint32_t *rm
 );
 
-bool pxQoLIsBL(
+bool pxqARM64IsBL(
     uint32_t insn
 );
 
-bool pxQoLIsB(
+bool pxqARM64IsB(
     uint32_t insn
 );
 
-bool pxQoLIsMovReg(
+bool pxqARM64IsMoveRegister(
     uint32_t insn,
-    uint32_t dstReg,
-    uint32_t srcReg
+    uint32_t destinationRegister,
+    uint32_t sourceRegister
 );
 
-bool pxQoLDecodeADD64RegisterNoShift(
+bool pxqARM64DecodeADD64RegisterNoShift(
     uint32_t insn,
     uint32_t *rd,
     uint32_t *rn,
     uint32_t *rm
 );
 
-bool pxQoLDecodeADD64ImmediateNoShift(
+bool pxqARM64DecodeADD64ImmediateNoShift(
     uint32_t insn,
     uint32_t *rd,
     uint32_t *rn,
     uint32_t *imm12
 );
 
-bool pxQoLDecodeMovReg(
+bool pxqARM64DecodeMoveRegister(
     uint32_t insn,
-    uint32_t *dstReg,
-    uint32_t *srcReg
+    uint32_t *destinationRegister,
+    uint32_t *sourceRegister
 );
 
-bool pxQoLDecodeLDUR64(
+bool pxqARM64DecodeLDUR64(
     uint32_t insn,
     uint32_t *rt,
     uint32_t *rn,
     int32_t *imm9
 );
 
-bool pxQoLDecodeBLR(
+bool pxqARM64DecodeBLR(
     uint32_t insn,
     uint32_t *rn
 );
 
-bool pxQoLDecodeADRP(
+bool pxqARM64DecodeADRP(
     uint32_t insn,
     uintptr_t pc,
     uint32_t *rd,
     uintptr_t *target
 );
 
-bool pxQoLReadU32(
-    uintptr_t address,
-    uint32_t *value
-);
-
-bool pxQoLReadU64(
-    uintptr_t address,
-    uint64_t *value
-);
-
-bool pxQoLDecodeBLTarget(
+bool pxqARM64DecodeBLTarget(
     uint32_t insn,
     uintptr_t pc,
     uintptr_t *target
 );
 
-bool pxQoLDecodeBranchTarget(
+bool pxqARM64DecodeBranchTarget(
     uint32_t insn,
     uintptr_t pc,
     uintptr_t *target
 );
 
-bool pxQoLMakeB(
+bool pxqARM64DecodeTBNZ(
+    uint32_t insn,
+    uintptr_t pc,
+    uint32_t *rt,
+    uint32_t *bitNumber,
+    uintptr_t *target
+);
+
+bool pxqARM64EncodeB(
     uintptr_t source,
     uintptr_t target,
     uint32_t *instruction
 );
 
-bool pxQoLMakeBL(
+bool pxqARM64EncodeBL(
     uintptr_t source,
     uintptr_t target,
     uint32_t *instruction
 );
 
-bool pxQoLMakeMOVZ32(
+bool pxqARM64EncodeMOVZ32(
     uint32_t rd,
     uint16_t imm16,
     uint32_t *instruction

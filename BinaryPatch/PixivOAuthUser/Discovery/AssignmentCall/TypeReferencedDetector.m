@@ -1,13 +1,16 @@
-#import "Finder_UserState_Initial_Internal.h"
-#import "../Core/pxQoLARM64.h"
-#import "../../LogHelper.h"
+#import "AssignmentCallDiscoveryInternal.h"
+#import "../../../Core/ARM64.h"
+#import "../../../Core/MemoryAccess.h"
+#import "../../../SwiftABI/Metadata.h"
+#import "../../../SwiftABI/ValueWitness.h"
+#import "../../Semantics/Semantics.h"
+#import "../../../../LogHelper.h"
 
-#import <mach/mach.h>
 
 #include <string.h>
 
 
-#pragma mark - InitialUserState Variant C
+#pragma mark - AssignmentCall TypeReferenced Take
 
 typedef struct {
     uintptr_t callsite;
@@ -18,213 +21,10 @@ typedef struct {
     uint32_t destinationReg;
     uint32_t stackImm;
 
-} pxqInitialUserStateVariantCCandidate;
+} PXQTypeReferencedAssignmentCallCandidate;
 
 
-static bool pxqReadMemory(
-    uintptr_t address,
-    void *buffer,
-    size_t size
-)
-{
-    if (address == 0 ||
-        !buffer ||
-        size == 0) {
-
-        return false;
-    }
-
-
-    vm_size_t outSize =
-        0;
-
-    kern_return_t kr =
-        vm_read_overwrite(
-            mach_task_self(),
-            (vm_address_t)address,
-            (vm_size_t)size,
-            (vm_address_t)buffer,
-            &outSize
-        );
-
-
-    return
-        kr == KERN_SUCCESS &&
-        outSize == (vm_size_t)size;
-}
-
-
-static bool pxqAddSignedDelta(
-    uintptr_t base,
-    int64_t delta,
-    uintptr_t *result
-)
-{
-    if (!result)
-        return false;
-
-
-    if (delta >= 0) {
-
-        uint64_t positive =
-            (uint64_t)delta;
-
-        if (positive >
-            (uint64_t)UINTPTR_MAX -
-            (uint64_t)base) {
-
-            return false;
-        }
-
-
-        *result =
-            base +
-            (uintptr_t)positive;
-
-        return true;
-    }
-
-
-    uint64_t magnitude =
-        (uint64_t)(-(delta + 1)) +
-        1u;
-
-
-    if ((uint64_t)base <
-        magnitude) {
-
-        return false;
-    }
-
-
-    *result =
-        base -
-        (uintptr_t)magnitude;
-
-    return true;
-}
-
-
-static bool pxqAddRelative32(
-    uintptr_t base,
-    int32_t relative,
-    uintptr_t *result
-)
-{
-    return pxqAddSignedDelta(
-        base,
-        (int64_t)relative,
-        result
-    );
-}
-
-
-
-static bool pxqReadCString(
-    uintptr_t address,
-    char *buffer,
-    size_t capacity
-)
-{
-    if (address == 0 ||
-        !buffer ||
-        capacity < 2) {
-
-        return false;
-    }
-
-
-    for (size_t i = 0;
-         i < capacity;
-         i++) {
-
-        uint8_t value =
-            0;
-
-
-        if (i >
-            (size_t)(UINTPTR_MAX - address)) {
-
-            return false;
-        }
-
-
-        if (!pxqReadMemory(
-                address + i,
-                &value,
-                sizeof(value))) {
-
-            return false;
-        }
-
-
-        buffer[i] =
-            (char)value;
-
-
-        if (value == 0)
-            return true;
-    }
-
-
-    buffer[
-        capacity - 1
-    ] =
-        '\0';
-
-
-    return false;
-}
-
-
-static bool pxqDecodeTBNZX0Bit63Target(
-    uint32_t insn,
-    uintptr_t pc,
-    uintptr_t *target
-)
-{
-    /*
-     * TBNZ X0,#63,<target>
-     *
-     * Ignore only imm14. Keep:
-     *
-     * - TBNZ opcode
-     * - X-register bit-number high bit
-     * - bit number 63
-     * - Rt == x0
-     */
-
-    if ((insn & 0xFFF8001Fu) !=
-        0xB7F80000u) {
-
-        return false;
-    }
-
-
-    int64_t imm14 =
-        (int64_t)(
-            (insn >> 5) &
-            0x3FFFu
-        );
-
-
-    if (imm14 &
-        0x2000) {
-
-        imm14 |=
-            ~0x3FFFLL;
-    }
-
-
-    return pxqAddSignedDelta(
-        pc,
-        imm14 << 2,
-        target
-    );
-}
-
-
-static bool pxqValidateVariantCLazyMetadataHelper(
+static bool pxqValidateLazyTypeMetadataResolver(
     uint8_t *text,
     unsigned long textSize,
     uintptr_t helper
@@ -234,9 +34,9 @@ static bool pxqValidateVariantCLazyMetadataHelper(
         0x50;
 
 
-    if (!pxqInText(
-            text,
-            textSize,
+    if (!pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             helper,
             scanSize)) {
 
@@ -259,6 +59,8 @@ static bool pxqValidateVariantCLazyMetadataHelper(
         uint32_t loadRt = 0;
         uint32_t loadRn = 0;
         uint32_t loadImm = 0;
+        uint32_t branchRt = 0;
+        uint32_t branchBitNumber = 0;
 
         uintptr_t unresolved =
             0;
@@ -281,12 +83,12 @@ static bool pxqValidateVariantCLazyMetadataHelper(
          * b    <resolved-return-path>
          */
 
-        if (!pxQoLIsMovReg(
+        if (!pxqARM64IsMoveRegister(
                 insns[i],
                 19,
                 0) ||
 
-            !pxQoLIsLDR64UnsignedImm(
+            !pxqARM64IsLDR64UnsignedImmediate(
                 insns[i + 1],
                 &loadRt,
                 &loadRn,
@@ -296,10 +98,15 @@ static bool pxqValidateVariantCLazyMetadataHelper(
             loadRn != 0 ||
             loadImm != 0 ||
 
-            !pxqDecodeTBNZX0Bit63Target(
+            !pxqARM64DecodeTBNZ(
                 insns[i + 2],
                 (uintptr_t)&insns[i + 2],
-                &unresolved)) {
+                &branchRt,
+                &branchBitNumber,
+                &unresolved) ||
+
+            branchRt != 0 ||
+            branchBitNumber != 63) {
 
             continue;
         }
@@ -309,9 +116,9 @@ static bool pxqValidateVariantCLazyMetadataHelper(
             unresolved >=
                 helper + scanSize ||
 
-            !pxqInText(
-                text,
-                textSize,
+            !pxqAddressRangeContains(
+                (uintptr_t)text,
+                (size_t)textSize,
                 unresolved,
                 7 * sizeof(uint32_t))) {
 
@@ -351,7 +158,7 @@ static bool pxqValidateVariantCLazyMetadataHelper(
              * mov x3,#0
              */
 
-            !pxQoLIsBL(
+            !pxqARM64IsBL(
                 u[4]) ||
 
             u[5] !=
@@ -361,7 +168,7 @@ static bool pxqValidateVariantCLazyMetadataHelper(
              * str x0,[x19]
              */
 
-            !pxQoLIsB(
+            !pxqARM64IsB(
                 u[6])) {
 
             continue;
@@ -372,7 +179,7 @@ static bool pxqValidateVariantCLazyMetadataHelper(
             0;
 
 
-        if (!pxQoLDecodeBranchTarget(
+        if (!pxqARM64DecodeBranchTarget(
                 u[6],
                 (uintptr_t)&u[6],
                 &resolvedPath) ||
@@ -393,7 +200,7 @@ static bool pxqValidateVariantCLazyMetadataHelper(
 }
 
 
-static bool pxqValidateInitialUserStateVariantCWrapper(
+static bool pxqValidateTypeReferencedTakeAssignmentWrapper(
     uint8_t *text,
     unsigned long textSize,
     uintptr_t wrapper,
@@ -405,9 +212,9 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 
 
     if (!metadataHelper ||
-        !pxqInText(
-            text,
-            textSize,
+        !pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             wrapper,
             scanSize)) {
 
@@ -424,7 +231,7 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 
 
     /*
-     * Variant C wrapper ABI:
+     * TypeReferenced Take wrapper ABI:
      *
      * x0 = source
      * x1 = destination
@@ -463,30 +270,30 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
             0;
 
 
-        if (!pxQoLIsMovReg(
+        if (!pxqARM64IsMoveRegister(
                 insns[i],
                 19,
                 1) ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 1],
                 20,
                 0) ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 2],
                 0,
                 2) ||
 
-            !pxQoLIsBL(
+            !pxqARM64IsBL(
                 insns[i + 3]) ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 4],
                 2,
                 0) ||
 
-            !pxQoLDecodeLDUR64(
+            !pxqARM64DecodeLDUR64(
                 insns[i + 5],
                 &ldurRt,
                 &ldurRn,
@@ -494,9 +301,10 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 
             ldurRt != 8 ||
             ldurRn != 0 ||
-            ldurImm != -8 ||
+            ldurImm !=
+                PXQ_SWIFT_VALUE_WITNESS_TABLE_METADATA_RELATIVE_OFFSET ||
 
-            !pxQoLIsLDR64UnsignedImm(
+            !pxqARM64IsLDR64UnsignedImmediate(
                 insns[i + 6],
                 &loadRt,
                 &loadRn,
@@ -504,41 +312,42 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 
             loadRt != 8 ||
             loadRn != 8 ||
-            loadImm != 5 ||
+            loadImm !=
+                PXQ_SWIFT_VALUE_WITNESS_ASSIGN_WITH_TAKE_POINTER_INDEX ||
 
             /*
              * 0x28 / 8 = 5
              */
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 7],
                 0,
                 19) ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 8],
                 1,
                 20) ||
 
-            !pxQoLDecodeBLR(
+            !pxqARM64DecodeBLR(
                 insns[i + 9],
                 &blrRn) ||
 
             blrRn != 8 ||
 
-            !pxQoLIsMovReg(
+            !pxqARM64IsMoveRegister(
                 insns[i + 10],
                 0,
                 19) ||
 
-            !pxQoLDecodeBLTarget(
+            !pxqARM64DecodeBLTarget(
                 insns[i + 3],
                 (uintptr_t)&insns[i + 3],
                 &helper) ||
 
-            !pxqInText(
-                text,
-                textSize,
+            !pxqAddressRangeContains(
+                (uintptr_t)text,
+                (size_t)textSize,
                 helper,
                 sizeof(uint32_t))) {
 
@@ -557,7 +366,7 @@ static bool pxqValidateInitialUserStateVariantCWrapper(
 }
 
 
-static bool pxqValidateInitialUserStateTypedCopyWrapper(
+static bool pxqValidateTypeReferencedCopyAssignmentWrapper(
     uint8_t *text,
     unsigned long textSize,
     uintptr_t wrapper
@@ -567,9 +376,9 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
         0x50;
 
 
-    if (!pxqInText(
-            text,
-            textSize,
+    if (!pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             wrapper,
             scanSize)) {
 
@@ -586,7 +395,7 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
 
 
     /*
-     * Typed-copy wrapper proof:
+     * TypeReferenced Copy wrapper proof:
      *
      * resolve metadata
      *   -> metadata VWT at [metadata - 8]
@@ -613,15 +422,16 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
         uint32_t loadImm = 0;
 
 
-        if (!pxQoLDecodeLDUR64(
+        if (!pxqARM64DecodeLDUR64(
                 insns[i],
                 &vwtReg,
                 &metadataReg,
                 &vwtImm) ||
 
-            vwtImm != -8 ||
+            vwtImm !=
+                PXQ_SWIFT_VALUE_WITNESS_TABLE_METADATA_RELATIVE_OFFSET ||
 
-            !pxQoLIsLDR64UnsignedImm(
+            !pxqARM64IsLDR64UnsignedImmediate(
                 insns[i + 1],
                 &functionReg,
                 &loadBaseReg,
@@ -629,7 +439,8 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
 
             loadBaseReg != vwtReg ||
 
-            loadImm != 3) {
+            loadImm !=
+                PXQ_SWIFT_VALUE_WITNESS_ASSIGN_WITH_COPY_POINTER_INDEX) {
 
             /*
              * 0x18 / sizeof(uintptr_t) = 3
@@ -657,7 +468,7 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
             uint32_t blrRn = 0;
 
 
-            if (pxQoLDecodeBLR(
+            if (pxqARM64DecodeBLR(
                     insns[j],
                     &blrRn) &&
                 blrRn == functionReg) {
@@ -672,13 +483,13 @@ static bool pxqValidateInitialUserStateTypedCopyWrapper(
 }
 
 
-static bool pxqParseInitialUserStateVariantCCaller(
+static bool pxqParseTypeReferencedTakeAssignmentCall(
     uint8_t *text,
     unsigned long textSize,
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqInitialUserStateVariantCCandidate *candidate
+    PXQTypeReferencedAssignmentCallCandidate *candidate
 )
 {
     if (!text ||
@@ -723,7 +534,7 @@ static bool pxqParseInitialUserStateVariantCCaller(
 
 
     /*
-     * Variant C caller:
+     * TypeReferenced Take caller:
      *
      * add  x1,sp,#ACCESS_IMM
      * mov  x0,DEST
@@ -742,7 +553,7 @@ static bool pxqParseInitialUserStateVariantCCaller(
      * bl   endAccess
      */
 
-    if (!pxQoLDecodeADD64ImmediateNoShift(
+    if (!pxqARM64DecodeADD64ImmediateNoShift(
             insns[i - 9],
             &beginRd,
             &beginRn,
@@ -751,7 +562,7 @@ static bool pxqParseInitialUserStateVariantCCaller(
         beginRd != 1 ||
         beginRn != 31 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 8],
             &destinationDst0,
             &destinationReg0) ||
@@ -772,10 +583,10 @@ static bool pxqParseInitialUserStateVariantCCaller(
          * mov x3,#0
          */
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i - 5]) ||
 
-        !pxQoLDecodeADRP(
+        !pxqARM64DecodeADRP(
             insns[i - 4],
             (uintptr_t)&insns[i - 4],
             &adrpRd,
@@ -783,7 +594,7 @@ static bool pxqParseInitialUserStateVariantCCaller(
 
         adrpRd != 2 ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i - 3],
             &typeAddRd,
             &typeAddRn,
@@ -792,14 +603,14 @@ static bool pxqParseInitialUserStateVariantCCaller(
         typeAddRd != 2 ||
         typeAddRn != 2 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 2],
             &sourceDst,
             &sourceReg) ||
 
         sourceDst != 0 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 1],
             &destinationDst1,
             &destinationReg1) ||
@@ -808,10 +619,10 @@ static bool pxqParseInitialUserStateVariantCCaller(
         destinationReg1 !=
             destinationReg0 ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i]) ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i + 1],
             &endRd,
             &endRn,
@@ -821,7 +632,7 @@ static bool pxqParseInitialUserStateVariantCCaller(
         endRn != 31 ||
         endImm != beginImm ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i + 2])) {
 
         return false;
@@ -850,14 +661,14 @@ static bool pxqParseInitialUserStateVariantCCaller(
         (uintptr_t)typeAddImm;
 
 
-    if (!pxQoLDecodeBLTarget(
+    if (!pxqARM64DecodeBLTarget(
             insns[i],
             (uintptr_t)&insns[i],
             &wrapper) ||
 
-        !pxqInText(
-            text,
-            textSize,
+        !pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             wrapper,
             sizeof(uint32_t))) {
 
@@ -895,13 +706,13 @@ static bool pxqParseInitialUserStateVariantCCaller(
 }
 
 
-static bool pxqParseInitialUserStateTypedCopyCaller(
+static bool pxqParseTypeReferencedCopyAssignmentCall(
     uint8_t *text,
     unsigned long textSize,
     const uint32_t *insns,
     size_t count,
     size_t i,
-    pxqInitialUserStateVariantCCandidate *candidate
+    PXQTypeReferencedAssignmentCallCandidate *candidate
 )
 {
     if (!text ||
@@ -949,7 +760,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
 
 
     /*
-     * Writer-A family caller:
+     * TypeReferenced Copy caller family:
      *
      * add  x1,sp,#ACCESS_IMM
      * mov  x0,DEST
@@ -980,7 +791,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
      *   source=x23 destination=x24 type=x19 ACCESS_IMM=0x28
      */
 
-    if (!pxQoLDecodeADD64ImmediateNoShift(
+    if (!pxqARM64DecodeADD64ImmediateNoShift(
             insns[i - 10],
             &beginRd,
             &beginRn,
@@ -989,7 +800,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         beginRd != 1 ||
         beginRn != 31 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 9],
             &destinationDst0,
             &destinationReg0) ||
@@ -1010,16 +821,16 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
          * mov x3,#0
          */
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i - 6]) ||
 
-        !pxQoLDecodeADRP(
+        !pxqARM64DecodeADRP(
             insns[i - 5],
             (uintptr_t)&insns[i - 5],
             &adrpRd,
             &typePage) ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i - 4],
             &typeAddRd,
             &typeAddRn,
@@ -1028,14 +839,14 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         typeAddRd != adrpRd ||
         typeAddRn != adrpRd ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 3],
             &sourceDst,
             &sourceReg) ||
 
         sourceDst != 0 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 2],
             &destinationDst1,
             &destinationReg1) ||
@@ -1044,7 +855,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         destinationReg1 !=
             destinationReg0 ||
 
-        !pxQoLDecodeMovReg(
+        !pxqARM64DecodeMoveRegister(
             insns[i - 1],
             &typeMoveDst,
             &typeReg) ||
@@ -1052,10 +863,10 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         typeMoveDst != 2 ||
         typeReg != adrpRd ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i]) ||
 
-        !pxQoLDecodeADD64ImmediateNoShift(
+        !pxqARM64DecodeADD64ImmediateNoShift(
             insns[i + 1],
             &endRd,
             &endRn,
@@ -1065,7 +876,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         endRn != 31 ||
         endImm != beginImm ||
 
-        !pxQoLIsBL(
+        !pxqARM64IsBL(
             insns[i + 2])) {
 
         return false;
@@ -1097,14 +908,14 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
         (uintptr_t)typeAddImm;
 
 
-    if (!pxQoLDecodeBLTarget(
+    if (!pxqARM64DecodeBLTarget(
             insns[i],
             (uintptr_t)&insns[i],
             &wrapper) ||
 
-        !pxqInText(
-            text,
-            textSize,
+        !pxqAddressRangeContains(
+            (uintptr_t)text,
+            (size_t)textSize,
             wrapper,
             sizeof(uint32_t))) {
 
@@ -1142,263 +953,7 @@ static bool pxqParseInitialUserStateTypedCopyCaller(
 }
 
 
-static bool pxqValidatePixivOAuthUserDescriptor(
-    uint8_t *text,
-    unsigned long textSize,
-    uintptr_t descriptor,
-    uintptr_t *metadataAccessor,
-    uint32_t *descriptorFieldCount,
-    uint32_t *fieldOffsetVectorOffset
-)
-{
-    if (!text ||
-        textSize == 0 ||
-        descriptor == 0 ||
-        !metadataAccessor) {
-
-        return false;
-    }
-
-
-    uint32_t flags = 0;
-    uint32_t rawNameRelative = 0;
-    uint32_t rawAccessorRelative = 0;
-    uint32_t rawFieldsRelative = 0;
-    uint32_t numFields = 0;
-    uint32_t fieldVectorOffset = 0;
-
-
-    if (!pxQoLReadU32(
-            descriptor + 0x00,
-            &flags) ||
-
-        !pxQoLReadU32(
-            descriptor + 0x08,
-            &rawNameRelative) ||
-
-        !pxQoLReadU32(
-            descriptor + 0x0C,
-            &rawAccessorRelative) ||
-
-        !pxQoLReadU32(
-            descriptor + 0x10,
-            &rawFieldsRelative) ||
-
-        !pxQoLReadU32(
-            descriptor + 0x14,
-            &numFields) ||
-
-        !pxQoLReadU32(
-            descriptor + 0x18,
-            &fieldVectorOffset)) {
-
-        return false;
-    }
-
-
-    /*
-     * Swift ContextDescriptorKind::Struct == 17.
-     *
-     * Use only the kind bits, not the version-specific/full flags.
-     */
-
-    if ((flags & 0x1Fu) !=
-            17u ||
-
-        rawNameRelative == 0 ||
-        rawAccessorRelative == 0 ||
-        rawFieldsRelative == 0 ||
-
-        numFields == 0 ||
-        numFields > 64) {
-
-        return false;
-    }
-
-
-    uintptr_t nameAddress =
-        0;
-
-    uintptr_t accessor =
-        0;
-
-    uintptr_t fields =
-        0;
-
-
-    if (!pxqAddRelative32(
-            descriptor + 0x08,
-            (int32_t)rawNameRelative,
-            &nameAddress) ||
-
-        !pxqAddRelative32(
-            descriptor + 0x0C,
-            (int32_t)rawAccessorRelative,
-            &accessor) ||
-
-        !pxqAddRelative32(
-            descriptor + 0x10,
-            (int32_t)rawFieldsRelative,
-            &fields)) {
-
-        return false;
-    }
-
-
-    char typeName[64];
-
-
-    if (!pxqReadCString(
-            nameAddress,
-            typeName,
-            sizeof(typeName)) ||
-
-        strcmp(
-            typeName,
-            "PixivOAuthUser") != 0) {
-
-        return false;
-    }
-
-
-    if (!pxqInText(
-            text,
-            textSize,
-            accessor,
-            sizeof(uint32_t))) {
-
-        return false;
-    }
-
-
-    uint32_t fieldHeader =
-        0;
-
-    uint32_t fieldCount =
-        0;
-
-
-    if (!pxQoLReadU32(
-            fields + 0x08,
-            &fieldHeader) ||
-
-        !pxQoLReadU32(
-            fields + 0x0C,
-            &fieldCount)) {
-
-        return false;
-    }
-
-
-    uint32_t recordSize =
-        fieldHeader >> 16;
-
-
-    if (recordSize < 12 ||
-        recordSize > 0x100 ||
-        fieldCount != numFields) {
-
-        return false;
-    }
-
-
-    size_t isPremiumCount =
-        0;
-
-
-    for (uint32_t i = 0;
-         i < fieldCount;
-         i++) {
-
-        uint64_t recordOffset =
-            0x10ull +
-            (uint64_t)i *
-            (uint64_t)recordSize;
-
-
-        if (recordOffset >
-            (uint64_t)UINTPTR_MAX -
-            (uint64_t)fields) {
-
-            return false;
-        }
-
-
-        uintptr_t record =
-            fields +
-            (uintptr_t)recordOffset;
-
-        uint32_t rawFieldNameRelative =
-            0;
-
-
-        if (!pxQoLReadU32(
-                record + 0x08,
-                &rawFieldNameRelative) ||
-
-            rawFieldNameRelative == 0) {
-
-            return false;
-        }
-
-
-        uintptr_t fieldNameAddress =
-            0;
-
-
-        if (!pxqAddRelative32(
-                record + 0x08,
-                (int32_t)rawFieldNameRelative,
-                &fieldNameAddress)) {
-
-            return false;
-        }
-
-
-        char fieldName[128];
-
-
-        if (!pxqReadCString(
-                fieldNameAddress,
-                fieldName,
-                sizeof(fieldName))) {
-
-            return false;
-        }
-
-
-        if (strcmp(
-                fieldName,
-                "isPremium") == 0) {
-
-            isPremiumCount++;
-        }
-    }
-
-
-    if (isPremiumCount != 1)
-        return false;
-
-
-    *metadataAccessor =
-        accessor;
-
-
-    if (descriptorFieldCount)
-        *descriptorFieldCount =
-            numFields;
-
-
-    if (fieldOffsetVectorOffset)
-        *fieldOffsetVectorOffset =
-            fieldVectorOffset;
-
-
-    return true;
-}
-
-
-static bool pxqResolveVariantCTypeRef(
+static bool pxqResolveOptionalPixivOAuthUserTypeEvidence(
     uint8_t *text,
     unsigned long textSize,
     uintptr_t typeRef,
@@ -1418,156 +973,27 @@ static bool pxqResolveVariantCTypeRef(
     }
 
 
-    uint64_t raw =
-        0;
-
-
-    if (!pxQoLReadU64(
-            typeRef,
-            &raw)) {
-
-        return false;
-    }
-
-
-    /*
-     * Variant C is currently proven only for the unresolved
-     * Swift lazy type-reference cell form:
-     *
-     *   low32  = signed relative pointer from cell to mangled name
-     *   high32 = negative mangled-name length
-     *
-     * Once Swift resolves the cache, bit63 clears and the cell
-     * becomes metadata. That resolved form is intentionally not
-     * guessed at in Phase 3A.
-     */
-
-    if ((raw &
-         0x8000000000000000ull) == 0) {
-
-        return false;
-    }
-
-
-    int32_t mangledRelative =
-        (int32_t)(
-            raw &
-            0xFFFFFFFFu
-        );
-
-    int32_t encodedLength =
-        (int32_t)(
-            raw >>
-            32
-        );
-
-
-    if (encodedLength >= 0)
-        return false;
-
-
-    int64_t mangledLength =
-        -(int64_t)encodedLength;
-
-
-    /*
-     * Narrow, proven symbolic mangling:
-     *
-     *   0x02 <rel32 indirect Context> 'S' 'g'
-     *
-     * Exactly seven bytes, resolving to Optional<PixivOAuthUser>.
-     */
-
-    if (mangledLength != 7)
-        return false;
-
-
-    uintptr_t mangled =
-        0;
-
-
-    if (!pxqAddRelative32(
-            typeRef,
-            mangledRelative,
-            &mangled)) {
-
-        return false;
-    }
-
-
-    uint8_t bytes[7];
-
-
-    if (!pxqReadMemory(
-            mangled,
-            bytes,
-            sizeof(bytes)) ||
-
-        bytes[0] !=
-            0x02 ||
-
-        bytes[5] !=
-            (uint8_t)'S' ||
-
-        bytes[6] !=
-            (uint8_t)'g') {
-
-        return false;
-    }
-
-
-    int32_t descriptorSlotRelative =
-        0;
-
-
-    memcpy(
-        &descriptorSlotRelative,
-        &bytes[1],
-        sizeof(descriptorSlotRelative)
-    );
-
-
-    uintptr_t descriptorSlot =
-        0;
-
-
-    if (!pxqAddRelative32(
-            mangled + 1,
-            descriptorSlotRelative,
-            &descriptorSlot)) {
-
-        return false;
-    }
-
-
-    uint64_t descriptorRaw =
-        0;
-
-
-    if (!pxQoLReadU64(
-            descriptorSlot,
-            &descriptorRaw) ||
-
-        descriptorRaw == 0) {
-
-        return false;
-    }
-
-
     uintptr_t resolvedDescriptor =
-        (uintptr_t)descriptorRaw;
-
-    uintptr_t accessor =
         0;
 
 
-    if (!pxqValidatePixivOAuthUserDescriptor(
+    if (!pxqSwiftMetadataResolveUnresolvedOptionalNominalTypeReference(
+            typeRef,
+            &resolvedDescriptor)) {
+
+        return false;
+    }
+
+
+    PXQPixivOAuthUserTypeDescriptorEvidence evidence =
+        {0};
+
+
+    if (!pxqValidatePixivOAuthUserTypeDescriptor(
             text,
             textSize,
             resolvedDescriptor,
-            &accessor,
-            descriptorFieldCount,
-            fieldOffsetVectorOffset)) {
+            &evidence)) {
 
         return false;
     }
@@ -1577,24 +1003,34 @@ static bool pxqResolveVariantCTypeRef(
         resolvedDescriptor;
 
     *metadataAccessor =
-        accessor;
+        evidence.pixivOAuthUserMetadataAccessor;
+
+
+    if (descriptorFieldCount)
+        *descriptorFieldCount =
+            evidence.fieldCount;
+
+
+    if (fieldOffsetVectorOffset)
+        *fieldOffsetVectorOffset =
+            evidence.fieldOffsetVectorOffset;
 
 
     return true;
 }
 
 
-static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
+PXQAssignmentCallResolutionStatus pxqDetectTypeReferencedCopyAssignmentCall(
     uint8_t *text,
     unsigned long textSize,
-    pxQoLPixivOAuthUserInitialUserStateMatch *match
+    PXQPixivOAuthUserAssignmentCallContract *match
 )
 {
     if (!text ||
         textSize == 0 ||
         !match) {
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_INTERNAL_FAILURE;
     }
 
 
@@ -1619,7 +1055,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
         0;
 
 
-    pxqInitialUserStateVariantCCandidate promotedCandidate;
+    PXQTypeReferencedAssignmentCallCandidate promotedCandidate;
 
     memset(
         &promotedCandidate,
@@ -1645,10 +1081,10 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
          i + 2 < count;
          i++) {
 
-        pxqInitialUserStateVariantCCandidate candidate;
+        PXQTypeReferencedAssignmentCallCandidate candidate;
 
 
-        if (!pxqParseInitialUserStateTypedCopyCaller(
+        if (!pxqParseTypeReferencedCopyAssignmentCall(
                 text,
                 textSize,
                 insns,
@@ -1663,7 +1099,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
         exactShapeCount++;
 
 
-        if (!pxqValidateInitialUserStateTypedCopyWrapper(
+        if (!pxqValidateTypeReferencedCopyAssignmentWrapper(
                 text,
                 textSize,
                 candidate.wrapper)) {
@@ -1671,7 +1107,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
             wrapperRejected++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] Typed Copy A structural candidate #%zu rejected: assignWithCopy wrapper validation failed callsite=text+0x%llx wrapper=text+0x%llx",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy structural candidate #%zu rejected: assignWithCopy wrapper validation failed callsite=text+0x%llx wrapper=text+0x%llx",
                 exactShapeCount,
                 (unsigned long long)(
                     candidate.callsite -
@@ -1705,7 +1141,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
          * wrapper validator proves assignWithCopy. Require the x2 cache
          * cell to resolve semantically to Optional<PixivOAuthUser>.
          */
-        if (!pxqResolveVariantCTypeRef(
+        if (!pxqResolveOptionalPixivOAuthUserTypeEvidence(
                 text,
                 textSize,
                 candidate.typeRef,
@@ -1717,7 +1153,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
             semanticTypeRejected++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] Typed Copy A structural candidate #%zu rejected: typeRef is not proven Optional<PixivOAuthUser> callsite=text+0x%llx typeRef=%p",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy structural candidate #%zu rejected: typeRef is not proven Optional<PixivOAuthUser> callsite=text+0x%llx typeRef=%p",
                 exactShapeCount,
                 (unsigned long long)(
                     candidate.callsite -
@@ -1734,7 +1170,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
 
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] Typed Copy A semantic candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx source=x%u destination=x%u stackImm=0x%x typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy semantic candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx source=x%u destination=x%u stackImm=0x%x typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
             promotedCount,
             (unsigned long long)(
                 candidate.callsite -
@@ -1779,7 +1215,7 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] Typed Copy A summary: exactShape=%zu wrapperRejected=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy summary: exactShape=%zu wrapperRejected=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
         exactShapeCount,
         wrapperRejected,
         semanticTypeRejected,
@@ -1787,14 +1223,24 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
     );
 
 
+    if (promotedCount == 0) {
+
+        pxQoLLog(
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy unresolved: no qualified semantic Optional<PixivOAuthUser> AssignmentCall candidate"
+        );
+
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_NO_QUALIFIED_CANDIDATE;
+    }
+
+
     if (promotedCount != 1) {
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] Typed Copy A rejected: expected exactly 1 semantic Optional<PixivOAuthUser> InitialUserState candidate, got %zu",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy rejected: expected exactly 1 semantic Optional<PixivOAuthUser> AssignmentCall candidate, got %zu",
             promotedCount
         );
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
     }
 
 
@@ -1805,16 +1251,13 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
     );
 
 
-    match->variant =
-        PXQ_PIXIV_OAUTH_USER_INITIAL_USER_STATE_VARIANT_TYPE_REF_X2_COPY_ASSIGNMENT;
-
-    match->callsites[0] =
+    match->callSites[0] =
         promotedCandidate.callsite;
 
-    match->callsiteCount =
+    match->callSiteCount =
         1;
 
-    match->originalWrapper =
+    match->originalAssignmentWrapper =
         promotedCandidate.wrapper;
 
     match->pixivOAuthUserMetadataAccessor =
@@ -1822,13 +1265,13 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] Typed Copy A resolved: callsite=text+0x%llx wrapper=text+0x%llx typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Copy resolved: callsite=text+0x%llx wrapper=text+0x%llx typeRef=%p descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
         (unsigned long long)(
-            match->callsites[0] -
+            match->callSites[0] -
             (uintptr_t)text
         ),
         (unsigned long long)(
-            match->originalWrapper -
+            match->originalAssignmentWrapper -
             (uintptr_t)text
         ),
         (void *)promotedCandidate.typeRef,
@@ -1842,21 +1285,21 @@ static bool pxqResolveTypedCopyInitialUserStateAndMetadata(
     );
 
 
-    return true;
+    return PXQ_ASSIGNMENT_CALL_RESOLUTION_RESOLVED;
 }
 
 
-bool pxqResolveVariantCInitialUserStateAndMetadata(
+PXQAssignmentCallResolutionStatus pxqDetectTypeReferencedTakeAssignmentCall(
     uint8_t *text,
     unsigned long textSize,
-    pxQoLPixivOAuthUserInitialUserStateMatch *match
+    PXQPixivOAuthUserAssignmentCallContract *match
 )
 {
     if (!text ||
         textSize == 0 ||
         !match) {
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_INTERNAL_FAILURE;
     }
 
 
@@ -1884,7 +1327,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
         0;
 
 
-    pxqInitialUserStateVariantCCandidate promotedCandidate;
+    PXQTypeReferencedAssignmentCallCandidate promotedCandidate;
 
     memset(
         &promotedCandidate,
@@ -1913,10 +1356,10 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
          i + 2 < count;
          i++) {
 
-        pxqInitialUserStateVariantCCandidate candidate;
+        PXQTypeReferencedAssignmentCallCandidate candidate;
 
 
-        if (!pxqParseInitialUserStateVariantCCaller(
+        if (!pxqParseTypeReferencedTakeAssignmentCall(
                 text,
                 textSize,
                 insns,
@@ -1935,7 +1378,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
             0;
 
 
-        if (!pxqValidateInitialUserStateVariantCWrapper(
+        if (!pxqValidateTypeReferencedTakeAssignmentWrapper(
                 text,
                 textSize,
                 candidate.wrapper,
@@ -1944,7 +1387,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
             wrapperRejected++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] Variant C structural candidate #%zu rejected: wrapper validation failed callsite=text+0x%llx wrapper=text+0x%llx",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take structural candidate #%zu rejected: wrapper validation failed callsite=text+0x%llx wrapper=text+0x%llx",
                 exactShapeCount,
                 (unsigned long long)(
                     candidate.callsite -
@@ -1960,7 +1403,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
         }
 
 
-        if (!pxqValidateVariantCLazyMetadataHelper(
+        if (!pxqValidateLazyTypeMetadataResolver(
                 text,
                 textSize,
                 metadataHelper)) {
@@ -1968,7 +1411,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
             helperRejected++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] Variant C structural candidate #%zu rejected: lazy metadata helper validation failed callsite=text+0x%llx helper=text+0x%llx",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take structural candidate #%zu rejected: lazy metadata helper validation failed callsite=text+0x%llx helper=text+0x%llx",
                 exactShapeCount,
                 (unsigned long long)(
                     candidate.callsite -
@@ -1997,7 +1440,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
             0;
 
 
-        if (!pxqResolveVariantCTypeRef(
+        if (!pxqResolveOptionalPixivOAuthUserTypeEvidence(
                 text,
                 textSize,
                 candidate.typeRef,
@@ -2009,7 +1452,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
             semanticTypeRejected++;
 
             pxQoLLog(
-                @"[PixivOAuthUser/Finder] Variant C structural candidate #%zu rejected: typeRef is not proven Optional<PixivOAuthUser> callsite=text+0x%llx typeRef=%p",
+                @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take structural candidate #%zu rejected: typeRef is not proven Optional<PixivOAuthUser> callsite=text+0x%llx typeRef=%p",
                 exactShapeCount,
                 (unsigned long long)(
                     candidate.callsite -
@@ -2026,7 +1469,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
 
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] Variant C semantic candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx source=x%u destination=x%u stackImm=0x%x typeRef=%p helper=text+0x%llx descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take semantic candidate #%zu: callsite=text+0x%llx wrapper=text+0x%llx source=x%u destination=x%u stackImm=0x%x typeRef=%p helper=text+0x%llx descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
             promotedCount,
             (unsigned long long)(
                 candidate.callsite -
@@ -2078,7 +1521,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] Variant C summary: exactShape=%zu wrapperRejected=%zu helperRejected=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take summary: exactShape=%zu wrapperRejected=%zu helperRejected=%zu semanticTypeRejected=%zu semanticPromoted=%zu",
         exactShapeCount,
         wrapperRejected,
         helperRejected,
@@ -2098,40 +1541,21 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
     if (promotedCount == 0) {
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] Variant C produced no semantic candidate; trying Typed Copy fallback"
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take unresolved: no qualified semantic Optional<PixivOAuthUser> AssignmentCall candidate"
         );
 
-
-        pxQoLPixivOAuthUserInitialUserStateMatch typedCopyMatch;
-
-        memset(
-            &typedCopyMatch,
-            0,
-            sizeof(typedCopyMatch)
-        );
-
-
-        if (pxqResolveTypedCopyInitialUserStateAndMetadata(
-                text,
-                textSize,
-                &typedCopyMatch)) {
-
-            *match =
-                typedCopyMatch;
-
-            return true;
-        }
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_NO_QUALIFIED_CANDIDATE;
     }
 
 
     if (promotedCount != 1) {
 
         pxQoLLog(
-            @"[PixivOAuthUser/Finder] Variant C rejected: expected exactly 1 semantic Optional<PixivOAuthUser> InitialUserState candidate, got %zu",
+            @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take rejected: expected exactly 1 semantic Optional<PixivOAuthUser> AssignmentCall candidate, got %zu",
             promotedCount
         );
 
-        return false;
+        return PXQ_ASSIGNMENT_CALL_RESOLUTION_REJECTED_AMBIGUOUS;
     }
 
 
@@ -2142,13 +1566,13 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
     );
 
 
-    match->callsites[0] =
+    match->callSites[0] =
         promotedCandidate.callsite;
 
-    match->callsiteCount =
+    match->callSiteCount =
         1;
 
-    match->originalWrapper =
+    match->originalAssignmentWrapper =
         promotedCandidate.wrapper;
 
     match->pixivOAuthUserMetadataAccessor =
@@ -2156,13 +1580,13 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
 
 
     pxQoLLog(
-        @"[PixivOAuthUser/Finder] Variant C resolved: callsite=text+0x%llx wrapper=text+0x%llx typeRef=%p helper=text+0x%llx descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
+        @"[PixivOAuthUser/Discovery/AssignmentCall/TypeReferenced] TypeReferenced Take resolved: callsite=text+0x%llx wrapper=text+0x%llx typeRef=%p helper=text+0x%llx descriptor=%p metadata=text+0x%llx fields=%u fieldOffsetVectorOffset=%u",
         (unsigned long long)(
-            match->callsites[0] -
+            match->callSites[0] -
             (uintptr_t)text
         ),
         (unsigned long long)(
-            match->originalWrapper -
+            match->originalAssignmentWrapper -
             (uintptr_t)text
         ),
         (void *)promotedCandidate.typeRef,
@@ -2180,7 +1604,7 @@ bool pxqResolveVariantCInitialUserStateAndMetadata(
     );
 
 
-    return true;
+    return PXQ_ASSIGNMENT_CALL_RESOLUTION_RESOLVED;
 }
 
 

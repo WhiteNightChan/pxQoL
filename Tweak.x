@@ -1,6 +1,6 @@
 #import <UIKit/UIKit.h>
 
-#import "BinaryPatch/PixivOAuthUser/Patch.h"
+#import "BinaryPatch/PixivOAuthUser/Installation/Installation.h"
 #import "AdBlockFallback.h"
 #import "SearchPopularPreviewRewrite.h"
 
@@ -209,7 +209,7 @@ static BOOL pxQoLReadBlockAdsEnabled(void)
         pxQoLReadBlockAdsEnabled();
 
     if (gPxQoLBlockAdsEnabled) {
-        pxQoLPatchPixivOAuthUserPremium();
+        pxQoLInstallPixivOAuthUserPremiumOverride();
         pxQoLInitSearchPopularPreviewRewrite();
     }
 

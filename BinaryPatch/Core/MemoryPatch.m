@@ -1,9 +1,8 @@
-#import "pxQoLMemoryPatch.h"
+#import "MemoryPatch.h"
 
 #import <dlfcn.h>
 
-
-LHPatchMemoryFunc pxQoLGetPatchMemory(void)
+LHPatchMemoryFunc pxqMemoryPatchResolveBackend(void)
 {
     void *symbol =
         dlsym(
