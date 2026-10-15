@@ -1,11 +1,11 @@
 #import "Installation.h"
-
 #import "PatchApplication.h"
 #import "PatchPlan.h"
-#import "../Discovery/Discovery.h"
-#import "../../Core/MachO.h"
-#import "../../Core/MemoryPatch.h"
-#import "../../../LogHelper.h"
+#import "BinaryPatch/PixivOAuthUser/Discovery/Discovery.h"
+#import "BinaryPatch/Core/MachO.h"
+#import "BinaryPatch/Core/MemoryPatch.h"
+
+#import "Debug/LogHelper.h"
 
 #include <stdbool.h>
 #include <stdint.h>

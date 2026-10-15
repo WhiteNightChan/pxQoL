@@ -1,11 +1,11 @@
 #import "AssignmentCallDiscoveryInternal.h"
-#import "../../../Core/ARM64.h"
-#import "../../../Core/MemoryAccess.h"
-#import "../../../SwiftABI/Metadata.h"
-#import "../../../SwiftABI/ValueWitness.h"
-#import "../../Semantics/Semantics.h"
-#import "../../../../LogHelper.h"
+#import "BinaryPatch/Core/ARM64.h"
+#import "BinaryPatch/Core/MemoryAccess.h"
+#import "BinaryPatch/SwiftABI/Metadata.h"
+#import "BinaryPatch/SwiftABI/ValueWitness.h"
+#import "BinaryPatch/PixivOAuthUser/Semantics/Semantics.h"
 
+#import "Debug/LogHelper.h"
 
 #include <string.h>
 

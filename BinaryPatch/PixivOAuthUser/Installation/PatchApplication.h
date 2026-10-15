@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 #import "PatchPlan.h"
-#import "../../Core/MemoryPatch.h"
+#import "BinaryPatch/Core/MemoryPatch.h"
 
 
 bool pxqApplyPixivOAuthUserPatchPlan(

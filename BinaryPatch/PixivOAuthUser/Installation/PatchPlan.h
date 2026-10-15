@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#import "../Contract/InterceptionContract.h"
+#import "BinaryPatch/PixivOAuthUser/Contract/InterceptionContract.h"
 
 
 #define PXQ_PIXIV_OAUTH_USER_MAX_PATCH_OPERATIONS \

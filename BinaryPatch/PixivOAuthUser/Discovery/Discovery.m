@@ -1,7 +1,8 @@
 #import "Discovery.h"
-#import "AssignmentCall/AssignmentCallDiscovery.h"
-#import "AssignmentReturn/AssignmentReturnDiscovery.h"
-#import "../../../LogHelper.h"
+#import "BinaryPatch/PixivOAuthUser/Discovery/AssignmentCall/AssignmentCallDiscovery.h"
+#import "BinaryPatch/PixivOAuthUser/Discovery/AssignmentReturn/AssignmentReturnDiscovery.h"
+
+#import "Debug/LogHelper.h"
 
 #include <string.h>
 

@@ -1,6 +1,6 @@
 #import "Semantics.h"
-#import "../../SwiftABI/Metadata.h"
-#import "../../Core/MemoryAccess.h"
+#import "BinaryPatch/SwiftABI/Metadata.h"
+#import "BinaryPatch/Core/MemoryAccess.h"
 
 #include <string.h>
 

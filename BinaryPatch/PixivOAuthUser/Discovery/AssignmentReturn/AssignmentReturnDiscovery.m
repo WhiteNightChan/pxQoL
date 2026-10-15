@@ -1,5 +1,6 @@
 #import "AssignmentReturnDiscovery.h"
-#import "../../../../LogHelper.h"
+
+#import "Debug/LogHelper.h"
 
 #include <string.h>
 

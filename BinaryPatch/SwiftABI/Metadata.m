@@ -1,5 +1,5 @@
 #import "Metadata.h"
-#import "../Core/MemoryAccess.h"
+#import "BinaryPatch/Core/MemoryAccess.h"
 
 #include <string.h>
 

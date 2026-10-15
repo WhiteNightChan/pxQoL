@@ -2,7 +2,8 @@
 #import <math.h>
 
 #import "AdBlockFallback.h"
-#import "LogHelper.h"
+
+#import "Debug/LogHelper.h"
 
 
 @interface MANativeAdLoader : NSObject

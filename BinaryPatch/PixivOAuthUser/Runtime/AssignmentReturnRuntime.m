@@ -1,6 +1,7 @@
 #import "RuntimeOverride.h"
-#import "../Contract/InterceptionContract.h"
-#import "../../../LogHelper.h"
+#import "BinaryPatch/PixivOAuthUser/Contract/InterceptionContract.h"
+
+#import "Debug/LogHelper.h"
 
 #include <stdbool.h>
 #include <stdint.h>

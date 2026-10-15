@@ -5,7 +5,7 @@
 
 #include <string.h>
 
-#import "../../LogHelper.h"
+#import "Debug/LogHelper.h"
 
 #define pxQoLLog(fmt, ...) \
     [LogHelper appendLine:[NSString stringWithFormat:(fmt), ##__VA_ARGS__]]

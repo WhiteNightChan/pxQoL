@@ -4,7 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#import "../../Contract/InterceptionContract.h"
+#import "BinaryPatch/PixivOAuthUser/Contract/InterceptionContract.h"
 
 
 bool pxqDiscoverPixivOAuthUserAssignmentCallInterception(

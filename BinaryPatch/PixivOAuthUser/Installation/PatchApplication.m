@@ -1,7 +1,7 @@
 #import "PatchApplication.h"
+#import "BinaryPatch/Core/MemoryAccess.h"
 
-#import "../../Core/MemoryAccess.h"
-#import "../../../LogHelper.h"
+#import "Debug/LogHelper.h"
 
 #include <stddef.h>
 #include <stdint.h>

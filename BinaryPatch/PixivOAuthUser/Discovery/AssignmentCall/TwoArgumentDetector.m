@@ -1,8 +1,9 @@
 #import "AssignmentCallDiscoveryInternal.h"
-#import "../../../Core/ARM64.h"
-#import "../../../Core/MemoryAccess.h"
-#import "../../../SwiftABI/ValueWitness.h"
-#import "../../../../LogHelper.h"
+#import "BinaryPatch/Core/ARM64.h"
+#import "BinaryPatch/Core/MemoryAccess.h"
+#import "BinaryPatch/SwiftABI/ValueWitness.h"
+
+#import "Debug/LogHelper.h"
 
 #include <string.h>
 

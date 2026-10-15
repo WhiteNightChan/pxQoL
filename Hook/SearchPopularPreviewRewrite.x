@@ -1,7 +1,8 @@
 #import <Foundation/Foundation.h>
 
 #import "SearchPopularPreviewRewrite.h"
-#import "LogHelper.h"
+
+#import "Debug/LogHelper.h"
 
 
 #pragma mark - Helpers
@@ -261,6 +262,25 @@ static NSURLRequest *pxQoLRewritePopularSearchRequest(
         );
 
     return %orig(rewrittenRequest);
+}
+
+
+- (NSURLSessionDataTask *)dataTaskWithRequest:
+    (NSURLRequest *)request
+    completionHandler:
+        (void (^)(NSData *data,
+                  NSURLResponse *response,
+                  NSError *error))completionHandler
+{
+    NSURLRequest *rewrittenRequest =
+        pxQoLRewritePopularSearchRequest(
+            request
+        );
+
+    return %orig(
+        rewrittenRequest,
+        completionHandler
+    );
 }
 
 %end

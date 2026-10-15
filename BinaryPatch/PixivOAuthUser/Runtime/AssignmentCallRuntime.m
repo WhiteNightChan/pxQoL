@@ -1,8 +1,9 @@
 #import "RuntimeOverride.h"
-#import "../Contract/InterceptionContract.h"
-#import "../../SwiftABI/Metadata.h"
-#import "../../SwiftABI/ValueWitness.h"
-#import "../../../LogHelper.h"
+#import "BinaryPatch/PixivOAuthUser/Contract/InterceptionContract.h"
+#import "BinaryPatch/SwiftABI/Metadata.h"
+#import "BinaryPatch/SwiftABI/ValueWitness.h"
+
+#import "Debug/LogHelper.h"
 
 #include <stdbool.h>
 #include <stddef.h>

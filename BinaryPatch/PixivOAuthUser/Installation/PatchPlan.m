@@ -1,7 +1,7 @@
 #import "PatchPlan.h"
+#import "BinaryPatch/Core/ARM64.h"
 
-#import "../../Core/ARM64.h"
-#import "../../../LogHelper.h"
+#import "Debug/LogHelper.h"
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -1,6 +1,7 @@
 #import "RuntimeOverride.h"
-#import "../Semantics/Semantics.h"
-#import "../../../LogHelper.h"
+#import "BinaryPatch/PixivOAuthUser/Semantics/Semantics.h"
+
+#import "Debug/LogHelper.h"
 
 #include <stddef.h>
 #include <stdint.h>
