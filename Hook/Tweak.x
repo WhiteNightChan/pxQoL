@@ -9,6 +9,9 @@
 - (NSString *)assetName;
 @end
 
+@interface _TtC5pixiv20RootTabBarController : UITabBarController
+@end
+
 @interface _TtC6Legacy20RootTabBarController : UITabBarController
 @end
 
@@ -35,9 +38,8 @@ static BOOL pxQoLReadBlockAdsEnabled(void)
     return [storedValue boolValue];
 }
 
-%hook _TtC6Legacy20RootTabBarController
-
-- (void)setViewControllers:(NSArray<UIViewController *> *)viewControllers
+static NSArray<UIViewController *> *pxQoLProcessedViewControllers(
+    NSArray<UIViewController *> *viewControllers)
 {
     NSMutableArray<UIViewController *> *visibleViewControllers =
         [NSMutableArray arrayWithCapacity:viewControllers.count];
@@ -193,7 +195,25 @@ static BOOL pxQoLReadBlockAdsEnabled(void)
         (unsigned long)reordered.count
     );
 
-    %orig(reordered);
+    return reordered;
+}
+
+
+%hook _TtC5pixiv20RootTabBarController
+
+- (void)setViewControllers:(NSArray<UIViewController *> *)viewControllers
+{
+    %orig(pxQoLProcessedViewControllers(viewControllers));
+}
+
+%end
+
+
+%hook _TtC6Legacy20RootTabBarController
+
+- (void)setViewControllers:(NSArray<UIViewController *> *)viewControllers
+{
+    %orig(pxQoLProcessedViewControllers(viewControllers));
 }
 
 %end

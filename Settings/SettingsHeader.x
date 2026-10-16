@@ -321,15 +321,17 @@
 
 #pragma mark - Pixiv SettingsViewController
 
+@interface _TtC5pixiv22SettingsViewController : UITableViewController
+@end
+
 @interface _TtC6Legacy22SettingsViewController : UITableViewController
 @end
 
-%hook _TtC6Legacy22SettingsViewController
 
-- (void)viewDidLoad {
-    %orig;
-
-    UITableView *tableView = self.tableView;
+static void PXQoLInstallSettingsHeader(
+    UITableViewController *viewController)
+{
+    UITableView *tableView = viewController.tableView;
 
     if (!tableView) {
         return;
@@ -358,12 +360,32 @@
                 tableView.bounds.size.width,
                 74.0)];
 
-    header.viewController = self;
+    header.viewController = viewController;
 
     header.autoresizingMask =
         UIViewAutoresizingFlexibleWidth;
 
     tableView.tableHeaderView = header;
+}
+
+
+%hook _TtC5pixiv22SettingsViewController
+
+- (void)viewDidLoad {
+    %orig;
+
+    PXQoLInstallSettingsHeader(self);
+}
+
+%end
+
+
+%hook _TtC6Legacy22SettingsViewController
+
+- (void)viewDidLoad {
+    %orig;
+
+    PXQoLInstallSettingsHeader(self);
 }
 
 %end
