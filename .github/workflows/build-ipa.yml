@@ -1,0 +1,169 @@
+name: 'Create pixiv + pxQoL app'
+
+on:
+  workflow_dispatch:
+    inputs:
+      ipa_url:
+        description: "URL to the decrypted pixiv IPA file"
+        required: true
+        type: string
+
+      display_name:
+        description: "App Name"
+        default: "pixiv"
+        required: true
+        type: string
+
+      bundle_id:
+        description: "Bundle ID"
+        default: "net.pxv.iphone"
+        required: true
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build pixiv + pxQoL
+    runs-on: macos-15
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Main
+        uses: actions/checkout@v6
+        with:
+          path: main
+          submodules: recursive
+
+      - name: Set current datetime
+        env:
+          TZ: 'Asia/Tokyo'
+        run: |
+          echo "CURRENT_DATE=$(date +'%Y/%m/%d')" >> $GITHUB_ENV
+          echo "CURRENT_DATE_NO_SLASH=$(date +'%Y%m%d')" >> $GITHUB_ENV
+
+      - name: Hide sensitive inputs
+        uses: levibostian/action-hide-sensitive-inputs@v1
+        with:
+          exclude_inputs: bundle_id,display_name
+
+      - name: Download and Validate IPA
+        env:
+          IPA_URL: ${{ inputs.ipa_url }}
+        run: |
+          wget "$IPA_URL" --no-verbose -O pixiv.ipa
+
+          FILE_TYPE=$(file --mime-type -b pixiv.ipa)
+
+          if [[ "$FILE_TYPE" != "application/x-ios-app" && "$FILE_TYPE" != "application/zip" ]]; then
+            echo "::error::Validation failed: The downloaded file is not a valid IPA. Detected type: $FILE_TYPE."
+            exit 1
+          fi
+
+          mkdir ipa_check
+          unzip -q pixiv.ipa -d ipa_check
+
+          APP_PATH=$(find ipa_check/Payload -maxdepth 1 -type d -name '*.app' -print -quit)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "::error::No .app bundle was found inside the IPA."
+            exit 1
+          fi
+
+          PIXIV_VERSION=$(
+            /usr/libexec/PlistBuddy \
+              -c "Print :CFBundleShortVersionString" \
+              "$APP_PATH/Info.plist"
+          )
+
+          echo "PIXIV_VERSION=$PIXIV_VERSION" >> $GITHUB_ENV
+
+          rm -rf ipa_check
+
+      - name: Install Dependencies
+        run: brew install make ldid dpkg
+
+      - name: Set PATH environment variable
+        run: |
+          echo "$(brew --prefix make)/libexec/gnubin" >> $GITHUB_PATH
+          echo "THEOS=${{ github.workspace }}/theos" >> $GITHUB_ENV
+
+      - name: Cache Theos
+        id: theos
+        uses: actions/cache@v5
+        env:
+          cache-name: theos_cache_13c2237
+        with:
+          path: theos/
+          key: ${{ env.cache-name }}
+          restore-keys: ${{ env.cache-name }}
+
+      - name: Setup Theos
+        if: ${{ steps.theos.outputs.cache-hit != 'true' }}
+        uses: actions/checkout@v6
+        with:
+          repository: theos/theos
+          ref: 13c22376b5d83ff759c1993de0a861e673aa522b
+          path: theos
+          submodules: recursive
+
+      - name: Download iOS SDK
+        if: ${{ steps.theos.outputs.cache-hit != 'true' }}
+        run: |
+          git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks/
+          cd sdks
+          git sparse-checkout set --no-cone iPhoneOS16.5.sdk
+          git checkout
+          mv *.sdk $THEOS/sdks
+
+      - name: Build Package
+        run: |
+          cd main && make clean package DEBUG=0 FINALPACKAGE=1
+
+      - name: Extract Values
+        run: |
+          NAME=$(grep '^Name:' main/control | cut -d ' ' -f 2)
+          echo "NAME=$NAME" >> $GITHUB_ENV
+
+          PACKAGE=$(grep '^Package:' main/control | cut -d ' ' -f 2)
+          echo "PACKAGE=$PACKAGE" >> $GITHUB_ENV
+
+          VERSION=$(grep '^Version:' main/control | cut -d ' ' -f 2)
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+          ROOTLESS_DEB_FILE_NAME="${PACKAGE}_${VERSION}_iphoneos-arm64.deb"
+          echo "ROOTLESS_DEB_FILE_NAME=$ROOTLESS_DEB_FILE_NAME" >> $GITHUB_ENV
+
+          OUTPUT_IPA="pixiv_v${PIXIV_VERSION}_pxQoL_v${VERSION}_${CURRENT_DATE_NO_SLASH}.ipa"
+          echo "OUTPUT_IPA=$OUTPUT_IPA" >> $GITHUB_ENV
+
+      - name: Install cyan
+        run: |
+          pipx install --force https://github.com/asdfzxcvbn/pyzule-rw/archive/main.zip
+
+      - name: Inject pxQoL into IPA
+        run: |
+          cyan \
+            -i pixiv.ipa \
+            -o "$OUTPUT_IPA" \
+            -uwef "main/packages/$ROOTLESS_DEB_FILE_NAME" \
+            -n "${{ inputs.display_name }}" \
+            -b "${{ inputs.bundle_id }}"
+
+      - name: Upload to GitHub Releases
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: pixiv-v${{ env.PIXIV_VERSION }}-pxQoL-v${{ env.VERSION }}
+          name: ${{ env.CURRENT_DATE }} - pixiv v${{ env.PIXIV_VERSION }} + pxQoL v${{ env.VERSION }}
+          files: |
+            ${{ env.OUTPUT_IPA }}
+          fail_on_unmatched_files: true
+          draft: true
+
+      - name: Output Release URL
+        run: |
+          echo "::notice::Release available at: https://github.com/${{ github.repository }}/releases"
